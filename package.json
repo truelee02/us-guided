@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.21.2"},"description":"Us, Guided — a shared AI guide for couples and families.","engines":{"node":">=18"},"main":"server.js","name":"us-guided","optionalDependencies":{"better-sqlite3":"^11.8.1"},"private":true,"scripts":{"start":"node server.js"},"type":"commonjs","version":"0.1.0"}

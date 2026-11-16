@@ -1,0 +1,25 @@
+# Render blueprint for Us, Guided.
+# Creates one always-on web service (Starter) with a 1 GB persistent disk
+# mounted at /var/data, where the app's data file lives (DATA_DIR).
+services:
+  - type: web
+    name: us-guided
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: SESSION_SECRET
+        generateValue: true
+      # Set GEMINI_API_KEY yourself in the Render dashboard
+      # (Environment tab) — it is never stored in this repo.
+      - key: GEMINI_API_KEY
+        sync: false
+    disk:
+      name: us-guided-data
+      mountPath: /var/data
+      sizeGB: 1

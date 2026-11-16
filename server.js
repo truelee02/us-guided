@@ -1,0 +1,351 @@
+'use strict';
+/*
+ * Us, Guided — standalone server.
+ * Express + (SQLite | JSON fallback). No build step; frontend is in /public.
+ */
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+/* --- tiny .env loader (no dependency) --- */
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+}
+
+const express = require('express');
+const store = require('./src/db');
+const ai = require('./src/ai');
+const { astroSummary } = require('./src/astro');
+
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-only-secret-change-me';
+const COOKIE_SECURE = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
+const app = express();
+app.use(express.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+
+/* ---------------- passwords & sessions ---------------- */
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+function verifyPassword(password, salt, expected) {
+  const hash = crypto.scryptSync(password, salt, 64);
+  return crypto.timingSafeEqual(hash, Buffer.from(expected, 'hex'));
+}
+function signToken(token) {
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(token).digest('base64url');
+  return `${token}.${sig}`;
+}
+function readSession(req) {
+  const cookie = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('sid='));
+  if (!cookie) return null;
+  const raw = decodeURIComponent(cookie.slice(4));
+  const [token, sig] = raw.split('.');
+  if (!token || !sig) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(token).digest('base64url');
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return store.getSessionUser(token);
+}
+function setSession(res, userId) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  store.createSession(token, userId);
+  res.setHeader('Set-Cookie', `sid=${encodeURIComponent(signToken(token))}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}${COOKIE_SECURE}`);
+}
+function clearSession(req, res) {
+  const cookie = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('sid='));
+  if (cookie) store.deleteSession(decodeURIComponent(cookie.slice(4)).split('.')[0]);
+  res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0' + COOKIE_SECURE);
+}
+function requireAuth(req, res, next) {
+  const user = readSession(req);
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  req.user = user;
+  next();
+}
+const inviteCode = () => crypto.randomBytes(4).toString('hex').toUpperCase(); // e.g. 9F3AC21B
+
+/* ---------------- helpers ---------------- */
+function publicPerson(p) {
+  if (!p) return null;
+  const astro = astroSummary(p);
+  return { ...p, astro, sun_sign: astro ? astro.sun : null, rising_sign: astro ? astro.rising : null };
+}
+function myPerson(req) {
+  return store.listPeople(req.user.household_id).find((p) => p.user_id === req.user.id) || null;
+}
+const todayKey = () => new Date().toISOString().slice(0, 10);
+
+/* ---------------- scheduled message delivery ----------------
+ * A scheduled message is stored (already cleaned — the raw draft is never
+ * kept) with scheduled_for set. Only its author can see or cancel it. When
+ * its time comes, it posts to the shared chat and the Guide replies, exactly
+ * as if it had just been sent.
+ */
+let delivering = false;
+async function deliverDue() {
+  if (delivering) return;
+  delivering = true;
+  try {
+    for (const m of store.listDueScheduled()) {
+      const delivered = store.deliverScheduled(m.id);
+      if (!delivered || delivered.scheduled_for) continue;
+      const people = store.listPeople(m.household_id);
+      const author = people.find((p) => p.id === m.person_id);
+      if (!author) continue;
+      const other = people.find((p) => p.id !== author.id) || null;
+      const recent = store.listMessages(m.household_id, 10).map((x) => ({
+        ...x, author_name: x.kind === 'guide' ? 'Guide' : (people.find((p) => p.id === x.person_id)?.name || 'Someone'),
+      }));
+      const advice = await ai.guideAdvice({ author, other, postedText: delivered.body, people, recentMessages: recent });
+      store.addMessage({
+        household_id: m.household_id, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
+      });
+    }
+  } catch (e) {
+    console.error('[schedule] delivery failed:', e.message);
+  } finally {
+    delivering = false;
+  }
+}
+setInterval(() => { deliverDue(); }, 30000);
+
+/* ---------------- auth ---------------- */
+app.post('/api/auth/signup', (req, res) => {
+  const { email, password, name } = req.body || {};
+  if (!email || !password || !name) return res.status(400).json({ error: 'Name, email and password are required.' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
+  const household = store.createHousehold(inviteCode());
+  const { salt, hash } = hashPassword(String(password));
+  const user = store.createUser({ household_id: household.id, email: String(email).toLowerCase(), password_hash: hash, salt });
+  const person = store.createPerson({ household_id: household.id, user_id: user.id, name: String(name), email: user.email });
+  setSession(res, user.id);
+  res.json({ user: { id: user.id, email: user.email }, household, person: publicPerson(person) });
+});
+
+app.post('/api/auth/join', (req, res) => {
+  const { email, password, name, code } = req.body || {};
+  if (!email || !password || !name || !code) return res.status(400).json({ error: 'Name, email, password and invite code are required.' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  const household = store.getHouseholdByInvite(String(code).trim().toUpperCase());
+  if (!household) return res.status(404).json({ error: 'Invite code not found.' });
+  if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
+  const { salt, hash } = hashPassword(String(password));
+  const user = store.createUser({ household_id: household.id, email: String(email).toLowerCase(), password_hash: hash, salt });
+  const person = store.createPerson({ household_id: household.id, user_id: user.id, name: String(name), email: user.email });
+  setSession(res, user.id);
+  res.json({ user: { id: user.id, email: user.email }, household, person: publicPerson(person) });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  const user = email ? store.getUserByEmail(String(email).toLowerCase()) : null;
+  if (!user || !verifyPassword(String(password || ''), user.salt, user.password_hash)) {
+    return res.status(401).json({ error: 'Email or password is wrong.' });
+  }
+  setSession(res, user.id);
+  res.json({ user: { id: user.id, email: user.email } });
+});
+
+app.post('/api/auth/logout', (req, res) => { clearSession(req, res); res.json({ ok: true }); });
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  const household = store.getHousehold(req.user.household_id);
+  res.json({ user: { id: req.user.id, email: req.user.email }, household, person: publicPerson(myPerson(req)) });
+});
+
+/* ---------------- people / profiles ---------------- */
+app.get('/api/people', requireAuth, (req, res) => {
+  res.json({ people: store.listPeople(req.user.household_id).map(publicPerson) });
+});
+
+app.post('/api/people', requireAuth, (req, res) => {
+  const { name, email, birthday } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'A name is required.' });
+  const person = store.createPerson({
+    household_id: req.user.household_id, name: String(name),
+    email: email || null, birthday: birthday || null,
+  });
+  res.json({ person: publicPerson(person) });
+});
+
+const PROFILE_FIELDS = ['name', 'email', 'birthday', 'birth_city', 'birth_time', 'birth_time_unknown',
+  'astrology_opt_in', 'love_language', 'attachment_style', 'personality_snapshot', 'fight_style',
+  'calms_down', 'makes_worse', 'work_on', 'triggers', 'guide_tone', 'relationship_type',
+  'together_duration', 'timezone'];
+
+app.put('/api/people/:id', requireAuth, (req, res) => {
+  const person = store.getPerson(req.params.id);
+  if (!person || person.household_id !== req.user.household_id) return res.status(404).json({ error: 'Person not found.' });
+  const updates = {};
+  for (const f of PROFILE_FIELDS) {
+    if (req.body && f in req.body) {
+      updates[f] = (f === 'birth_time_unknown' || f === 'astrology_opt_in') ? (req.body[f] ? 1 : 0) : req.body[f];
+    }
+  }
+  if (updates.birth_time_unknown) updates.birth_time = null; // rising sign needs a real time
+  if (req.body && req.body.finish === true) updates.profile_complete = 1;
+  res.json({ person: publicPerson(store.updatePerson(person.id, updates)) });
+});
+
+/* ---------------- talk (shared chat) ---------------- */
+app.get('/api/messages', requireAuth, async (req, res) => {
+  await deliverDue(); // post anything whose time has come before showing the chat
+  const people = store.listPeople(req.user.household_id);
+  const byId = Object.fromEntries(people.map((p) => [p.id, p.name]));
+  const messages = store.listMessages(req.user.household_id, 100).map((m) => ({
+    ...m, author_name: m.kind === 'guide' ? 'Guide' : (byId[m.person_id] || 'Someone'),
+  }));
+  res.json({ messages });
+});
+
+app.post('/api/messages', requireAuth, async (req, res) => {
+  const { text, sendAt } = req.body || {};
+  const author = myPerson(req);
+  if (!author) return res.status(400).json({ error: 'Finish setting up your profile first.' });
+  if (!text || !String(text).trim()) return res.status(400).json({ error: 'Message is empty.' });
+  let when = null;
+  if (sendAt) {
+    when = new Date(sendAt);
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'That send time doesn\'t look right.' });
+  }
+
+  const people = store.listPeople(req.user.household_id);
+  const other = people.find((p) => p.id !== author.id) || null;
+
+  // 1) Clean the raw draft. The raw text is NEVER stored — only the result.
+  const cleaned = await ai.cleanMessage(String(text), author, people);
+  const suffix = '(reworded by AI for clearer communication)';
+  const body = cleaned.changed ? `${cleaned.text} ${suffix}` : cleaned.text;
+
+  // 1b) Scheduled send: keep the cleaned message private to the author and
+  // post it when its time comes (see deliverDue above).
+  if (when && when.getTime() > Date.now()) {
+    const scheduled = store.addMessage({
+      household_id: req.user.household_id, person_id: author.id,
+      kind: 'message', body, reworded: cleaned.changed ? 1 : 0,
+      scheduled_for: when.toISOString(),
+    });
+    return res.json({ scheduled: { ...scheduled, author_name: author.name }, stub: cleaned.stub });
+  }
+
+  const posted = store.addMessage({
+    household_id: req.user.household_id, person_id: author.id,
+    kind: 'message', body, reworded: cleaned.changed ? 1 : 0,
+  });
+
+  // 2) Guide advice reply.
+  const recent = store.listMessages(req.user.household_id, 10).map((m) => ({
+    ...m, author_name: m.kind === 'guide' ? 'Guide' : (people.find((p) => p.id === m.person_id)?.name || 'Someone'),
+  }));
+  const advice = await ai.guideAdvice({ author, other, postedText: body, people, recentMessages: recent });
+  const guideMsg = store.addMessage({
+    household_id: req.user.household_id, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
+  });
+
+  res.json({
+    posted: { ...posted, author_name: author.name },
+    guide: { ...guideMsg, author_name: 'Guide' },
+    stub: cleaned.stub || advice.stub,
+  });
+});
+
+/* Scheduled messages: the author alone can see and cancel their own. */
+app.get('/api/messages/scheduled', requireAuth, (req, res) => {
+  const me = myPerson(req);
+  if (!me) return res.json({ scheduled: [] });
+  const scheduled = store.listScheduled(req.user.household_id, me.id)
+    .map((m) => ({ ...m, author_name: me.name }));
+  res.json({ scheduled });
+});
+
+app.delete('/api/messages/scheduled/:id', requireAuth, (req, res) => {
+  const me = myPerson(req);
+  if (!me) return res.status(404).json({ error: 'Scheduled message not found.' });
+  const mine = store.listScheduled(req.user.household_id, me.id);
+  if (!mine.some((m) => m.id === req.params.id)) {
+    return res.status(404).json({ error: 'Scheduled message not found.' });
+  }
+  store.deleteMessage(req.params.id);
+  res.json({ ok: true });
+});
+
+/* ---------------- together: reminders & date ideas ---------------- */
+app.get('/api/reminders', requireAuth, (req, res) => {
+  res.json({ reminders: store.listReminders(req.user.household_id) });
+});
+app.post('/api/reminders', requireAuth, (req, res) => {
+  const { text, personId } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'Reminder text is required.' });
+  res.json({ reminder: store.addReminder({ household_id: req.user.household_id, person_id: personId || null, text: String(text) }) });
+});
+app.patch('/api/reminders/:id', requireAuth, (req, res) => {
+  store.setReminderDone(req.params.id, !!(req.body && req.body.done));
+  res.json({ ok: true });
+});
+
+app.get('/api/date-ideas', requireAuth, (req, res) => {
+  res.json({ ideas: store.listDateIdeas(req.user.household_id) });
+});
+app.post('/api/date-ideas', requireAuth, (req, res) => {
+  const { title, category, notes } = req.body || {};
+  if (!title) return res.status(400).json({ error: 'An idea title is required.' });
+  res.json({ idea: store.addDateIdea({ household_id: req.user.household_id, title: String(title), category, notes }) });
+});
+app.delete('/api/date-ideas/:id', requireAuth, (req, res) => {
+  store.deleteDateIdea(req.params.id);
+  res.json({ ok: true });
+});
+
+/* ---------------- daily focuses + weekly/daily content ---------------- */
+app.get('/api/focuses', requireAuth, async (req, res) => {
+  const people = store.listPeople(req.user.household_id);
+  const dateKey = todayKey();
+  const focuses = [];
+  for (const person of people) {
+    let focus = store.getDailyFocus(req.user.household_id, person.id, dateKey);
+    if (!focus) {
+      const partner = people.find((p) => p.id !== person.id) || null;
+      const { text } = await ai.dailyFocus(person, partner, people);
+      focus = store.saveDailyFocus(req.user.household_id, person.id, dateKey, text);
+    }
+    focuses.push({ ...focus, person_name: person.name });
+  }
+  res.json({ focuses });
+});
+app.patch('/api/focuses/:id', requireAuth, (req, res) => {
+  store.setDailyFocusDone(req.params.id, !!(req.body && req.body.done));
+  res.json({ ok: true });
+});
+
+app.get('/api/weekly', requireAuth, (req, res) => {
+  const hid = req.user.household_id;
+  const weekKey = ai.weekKeyOf();
+  let ideas = store.getWeeklySet(hid, weekKey, 'date_ideas');
+  if (!ideas) ideas = store.saveWeeklySet(hid, weekKey, 'date_ideas', ai.weeklyDateIdeas(weekKey));
+  let activity = store.getWeeklySet(hid, weekKey, 'activity');
+  if (!activity) activity = store.saveWeeklySet(hid, weekKey, 'activity', ai.weeklyActivity(weekKey));
+  const dateKey = todayKey();
+  let daily = store.getDailyActivity(hid, dateKey);
+  if (!daily) daily = store.saveDailyActivity(hid, dateKey, ai.dailyActivity(dateKey));
+  res.json({ weekKey, weeklyDateIdeas: ideas.payload, weeklyActivity: activity.payload, dailyActivity: daily });
+});
+
+/* ---------------- health & static ---------------- */
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, db: store.mode, ai: ai.STUB ? 'stub' : 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.6-flash' });
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+app.listen(PORT, () => {
+  console.log(`Us, Guided listening on http://localhost:${PORT} (db: ${store.mode}, ai: ${ai.STUB ? 'STUB' : 'Gemini'})`);
+});
