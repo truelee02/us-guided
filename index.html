@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Us, Guided</title>
+<meta name="theme-color" content="#7c5cbf">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ============ AUTH VIEW ============ -->
+<main id="auth-view" class="card auth-card" hidden>
+  <h1>💜 Us, Guided</h1>
+  <p class="muted">One shared chat with an AI Guide who knows you both — and helps you say the hard things kindly.</p>
+
+  <div class="auth-tabs">
+    <button data-auth-tab="login" class="auth-tab active">Log in</button>
+    <button data-auth-tab="signup" class="auth-tab">Sign up</button>
+    <button data-auth-tab="join" class="auth-tab">Join with invite</button>
+  </div>
+
+  <form id="login-form" class="auth-form">
+    <label>Email <input type="email" name="email" required autocomplete="email"></label>
+    <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+    <button type="submit" class="primary">Log in</button>
+  </form>
+
+  <form id="signup-form" class="auth-form" hidden>
+    <label>Your name <input type="text" name="name" required autocomplete="name"></label>
+    <label>Email <input type="email" name="email" required autocomplete="email"></label>
+    <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <button type="submit" class="primary">Create our space</button>
+    <p class="muted small">Creates a household and gives you an invite code to share with your partner.</p>
+  </form>
+
+  <form id="join-form" class="auth-form" hidden>
+    <label>Your name <input type="text" name="name" required autocomplete="name"></label>
+    <label>Email <input type="email" name="email" required autocomplete="email"></label>
+    <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <label>Invite code <input type="text" name="code" required placeholder="e.g. 9F3AC21B" style="text-transform:uppercase"></label>
+    <button type="submit" class="primary">Join household</button>
+  </form>
+  <p id="auth-error" class="error" hidden></p>
+</main>
+
+<!-- ============ APP VIEW ============ -->
+<div id="app-view" hidden>
+  <header class="topbar">
+    <span class="logo">💜 Us, Guided</span>
+    <span id="stub-badge" class="badge" hidden>STUB AI</span>
+    <button id="logout-btn" class="ghost">Log out</button>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="talk" class="tab active">Talk</button>
+    <button data-tab="together" class="tab">Together</button>
+    <button data-tab="us" class="tab">Us</button>
+  </nav>
+
+  <!-- ===== TALK ===== -->
+  <section id="tab-talk" class="tab-panel">
+    <div id="focus-cards"></div>
+    <div id="messages" class="messages"></div>
+    <div id="scheduled-strip" hidden>
+      <h4>🕐 Scheduled — only you can see these</h4>
+      <div id="scheduled-list"></div>
+    </div>
+    <form id="composer" class="composer">
+      <textarea id="composer-text" rows="2" placeholder="Say it like you'd say it out loud — the Guide will help it land kindly. Your raw words are never saved."></textarea>
+      <div class="composer-btns">
+        <button type="submit" class="primary">Send</button>
+        <button type="button" id="schedule-toggle" class="ghost">🕐 Later</button>
+      </div>
+    </form>
+    <div id="schedule-panel" class="card" hidden>
+      <p class="small muted">Write your message above, then pick when it should post. Your partner won't see it until it lands in the chat — and it still goes through the Guide first, like every message.</p>
+      <div class="chips">
+        <button type="button" class="ghost" data-sched="1h">In 1 hour</button>
+        <button type="button" class="ghost" data-sched="tonight">Tonight 8 PM</button>
+        <button type="button" class="ghost" data-sched="tomorrow">Tomorrow 8 AM</button>
+      </div>
+      <label>Or pick a time <input type="datetime-local" id="schedule-at"></label>
+      <p id="schedule-preview" class="small"></p>
+      <div class="modal-actions">
+        <button type="button" id="schedule-cancel" class="ghost">Never mind</button>
+        <button type="button" id="schedule-confirm" class="primary">Schedule send</button>
+      </div>
+    </div>
+    <p id="talk-error" class="error" hidden></p>
+  </section>
+
+  <!-- ===== TOGETHER ===== -->
+  <section id="tab-together" class="tab-panel" hidden>
+    <div class="card">
+      <h3>🌱 Today's connection activity</h3>
+      <p id="daily-activity">…</p>
+    </div>
+
+    <div class="card">
+      <h3>🗓️ This week's connection activity</h3>
+      <p id="weekly-activity"></p>
+    </div>
+
+    <div class="card">
+      <h3>🎲 This week's date ideas</h3>
+      <ul id="weekly-ideas" class="plain-list"></ul>
+    </div>
+
+    <div class="card">
+      <h3>✅ Reminders</h3>
+      <div id="reminders"></div>
+      <form id="reminder-form" class="inline-form">
+        <select id="reminder-person"></select>
+        <input type="text" id="reminder-text" placeholder="Remind about…" required>
+        <button type="submit" class="primary">Add</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>💡 Saved date ideas</h3>
+      <ul id="date-ideas" class="plain-list"></ul>
+      <form id="idea-form" class="inline-form">
+        <input type="text" id="idea-title" placeholder="Idea…" required>
+        <select id="idea-category">
+          <option value="at home">at home</option>
+          <option value="little to no cost">little to no cost</option>
+          <option value="no sitter needed">no sitter needed</option>
+          <option value="out &amp; about">out &amp; about</option>
+        </select>
+        <button type="submit" class="primary">Save</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===== US ===== -->
+  <section id="tab-us" class="tab-panel" hidden>
+    <div class="card">
+      <h3>🏠 Your household</h3>
+      <p>Invite code: <strong id="invite-code">—</strong></p>
+      <p class="muted small">Share this code so your partner (or family member) can join this same household from the sign-up screen.</p>
+    </div>
+
+    <div id="people-list"></div>
+
+    <div class="card">
+      <h3>➕ Add a person</h3>
+      <form id="add-person-form" class="stack-form">
+        <label>Name <input type="text" name="name" required></label>
+        <label>Email <input type="email" name="email"></label>
+        <label>Birthday <input type="date" name="birthday"></label>
+        <button type="submit" class="primary">Add person</button>
+      </form>
+    </div>
+  </section>
+</div>
+
+<!-- ============ PROFILE EDITOR MODAL ============ -->
+<div id="profile-modal" class="modal" hidden>
+  <div class="modal-box">
+    <h2 id="profile-title">Finish profile</h2>
+    <form id="profile-form" class="stack-form">
+      <input type="hidden" name="personId">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Email <input type="email" name="email"></label>
+      <label>Birthday <input type="date" name="birthday"></label>
+
+      <fieldset>
+        <legend>Astrology (optional)</legend>
+        <label>Birth city <input type="text" name="birth_city" placeholder="City, State"></label>
+        <label>Birth time <input type="time" name="birth_time"></label>
+        <label class="check"><input type="checkbox" name="birth_time_unknown"> I don't know my birth time</label>
+        <label class="check"><input type="checkbox" name="astrology_opt_in"> Include astrology in my advice (opt in)</label>
+        <p class="muted small">Sun sign comes from your birthday. A rising sign is only estimated when a birth time is known. The Guide never mentions astrology unless you opt in.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Love language quiz</legend>
+        <div id="quiz-love"></div>
+        <p>Result: <strong id="love-result">—</strong></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Attachment style quiz</legend>
+        <div id="quiz-attachment"></div>
+        <p>Result: <strong id="attachment-result">—</strong></p>
+      </fieldset>
+
+      <label>Personality snapshot
+        <textarea name="personality_snapshot" rows="2" placeholder="A few words about you — e.g. introvert, planner, night owl, peacemaker…"></textarea></label>
+      <label>How do you act in a fight?
+        <textarea name="fight_style" rows="2" placeholder="Shut down and need space? Need to talk it out right now?"></textarea></label>
+      <label>What calms you down?
+        <textarea name="calms_down" rows="2"></textarea></label>
+      <label>What makes it worse?
+        <textarea name="makes_worse" rows="2"></textarea></label>
+      <label>Top 1–2 things you want to work on
+        <textarea name="work_on" rows="2"></textarea></label>
+      <label>Triggers / sensitive topics (the Guide will handle gently)
+        <textarea name="triggers" rows="2"></textarea></label>
+      <label>How should the Guide talk to you?
+        <select name="guide_tone">
+          <option value="">No preference</option>
+          <option value="gentle and soft">Gentle and soft</option>
+          <option value="straight-up and direct">Straight-up and direct</option>
+          <option value="warm with a little humor">Warm with a little humor</option>
+        </select></label>
+
+      <fieldset>
+        <legend>Practical details</legend>
+        <label>We are a
+          <select name="relationship_type">
+            <option value="">—</option>
+            <option value="couple">Couple</option>
+            <option value="family">Family</option>
+          </select></label>
+        <label>How long together <input type="text" name="together_duration" placeholder="e.g. 6 years"></label>
+        <label>Timezone <input type="text" name="timezone" placeholder="e.g. America/Chicago"></label>
+      </fieldset>
+
+      <div class="modal-actions">
+        <button type="button" id="profile-cancel" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save profile</button>
+      </div>
+      <p id="profile-error" class="error" hidden></p>
+    </form>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+</script>
+</body>
+</html>
