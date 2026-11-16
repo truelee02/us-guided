@@ -1,7 +1,8 @@
 'use strict';
 /*
  * Us, Guided — standalone server.
- * Express + (SQLite | JSON fallback). No build step; frontend is in /public.
+ * Express + (SQLite | JSON fallback). No build step; the frontend files
+ * (index.html, app.js, styles.css, ...) sit alongside this file.
  */
 const fs = require('fs');
 const path = require('path');
@@ -17,9 +18,9 @@ if (fs.existsSync(envPath)) {
 }
 
 const express = require('express');
-const store = require('./src/db');
-const ai = require('./src/ai');
-const { astroSummary } = require('./src/astro');
+const store = require('./db');
+const ai = require('./ai');
+const { astroSummary } = require('./astro');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-only-secret-change-me';
@@ -343,8 +344,20 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, db: store.mode, ai: ai.STUB ? 'stub' : 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.6-flash' });
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+/* Web assets (index.html, app.js, styles.css, ...) live in this same folder.
+   Never serve the server-side code, dependencies, or the data directory. */
+const BLOCKED_PATHS = new Set(['/server.js', '/db.js', '/ai.js', '/astro.js',
+  '/package.json', '/package-lock.json', '/render.yaml', '/README.md',
+  '/.env.example', '/.gitignore']);
+app.use((req, res, next) => {
+  if (BLOCKED_PATHS.has(req.path) || req.path === '/data' ||
+      req.path.startsWith('/data/') || req.path.startsWith('/node_modules/')) {
+    return res.status(404).end();
+  }
+  next();
+});
+app.use(express.static(__dirname, { index: false }));
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 app.listen(PORT, () => {
   console.log(`Us, Guided listening on http://localhost:${PORT} (db: ${store.mode}, ai: ${ai.STUB ? 'STUB' : 'Gemini'})`);
