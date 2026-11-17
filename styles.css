@@ -119,3 +119,8 @@ html, body { overflow-x: hidden; }
   .composer textarea { flex: 1 1 100%; }
   .composer-btns { flex-direction: row; }
 }
+.invite-actions { margin: 10px 0 4px; }
+a.ghost.chip-link {
+  text-decoration: none; color: var(--ink); display: inline-block;
+  border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; background: none;
+}

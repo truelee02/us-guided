@@ -1,6 +1,6 @@
 /* Basic service worker: cache the app shell so the app is installable and
    opens fast. API calls always go to the network. */
-const CACHE = 'sra-v4';
+const CACHE = 'sra-v5';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/privacy.html', '/terms.html'];
 
 self.addEventListener('install', (e) => {

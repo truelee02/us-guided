@@ -161,6 +161,15 @@
       <h3>🏠 Your household</h3>
       <p>Invite code: <strong id="invite-code">—</strong></p>
       <p class="muted small">Share this code so your partner (or family member) can join this same household from the sign-up screen.</p>
+      <div class="invite-actions">
+        <button type="button" id="share-invite" class="primary">📤 Share invite</button>
+      </div>
+      <div id="invite-fallback" class="chips" hidden>
+        <a id="invite-sms" class="ghost chip-link" href="#">📱 Text it</a>
+        <a id="invite-mail" class="ghost chip-link" href="#">✉️ Email it</a>
+        <button type="button" id="invite-copy" class="ghost">📋 Copy text</button>
+      </div>
+      <p id="invite-msg" class="small note" hidden></p>
     </div>
 
     <div id="people-list"></div>

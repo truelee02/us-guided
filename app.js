@@ -355,6 +355,7 @@ async function loadPeople() {
   const { people } = await api('GET', '/api/people');
   state.people = people;
   $('#invite-code').textContent = state.me?.household?.invite_code || '—';
+  wireInvite();
   $('#people-list').innerHTML = people.map((p) => `
     <div class="card person-card">
       <h3>${esc(p.name)} ${p.id === state.me?.person?.id ? '<span class="badge">you</span>' : ''}</h3>
@@ -370,6 +371,39 @@ async function loadPeople() {
     b.addEventListener('click', () => openProfile(state.people.find((p) => p.id === b.dataset.editPerson)));
   });
 }
+
+/* ================= Invite sharing =================
+   One tap opens the phone's own share sheet (Messages, Mail, WhatsApp, …)
+   with the app link and invite code already written out — the app itself
+   never sees or contacts the person being invited. Where the share sheet
+   isn't available, Text / Email / Copy options appear instead. */
+function inviteText() {
+  const code = state.me?.household?.invite_code || '';
+  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Open ${location.origin}\n2. Tap "Join with invite"\n3. Use this code: ${code}`;
+}
+function wireInvite() {
+  if (!state.me?.household?.invite_code) return;
+  const text = inviteText();
+  $('#invite-sms').href = `sms:?&body=${encodeURIComponent(text)}`;
+  $('#invite-mail').href = `mailto:?subject=${encodeURIComponent('Join me on Us, Guided')}&body=${encodeURIComponent(text)}`;
+}
+$('#share-invite').addEventListener('click', async () => {
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Us, Guided', text: inviteText() }); } catch (_) { /* sheet closed */ }
+  } else {
+    $('#invite-fallback').hidden = false;
+  }
+});
+$('#invite-copy').addEventListener('click', async () => {
+  const msg = $('#invite-msg');
+  try {
+    await navigator.clipboard.writeText(inviteText());
+    msg.textContent = 'Invite text copied — paste it anywhere.';
+  } catch (_) {
+    msg.textContent = inviteText();
+  }
+  msg.hidden = false;
+});
 
 function openProfile(person) {
   if (!person) return;
