@@ -106,3 +106,16 @@ hr.sep { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   body { padding: 10px; }
   .msg { max-width: 100%; }
 }
+/* Phone fit (Nov 17): the page must never scroll sideways — vertical only.
+   Flex children get min-width: 0 so long text wraps instead of stretching
+   the layout, and long words break rather than overflow. */
+html, body { overflow-x: hidden; }
+.composer textarea { min-width: 0; }
+.msg, .sched-body, .focus-card span, .reminder span { overflow-wrap: break-word; }
+.sched-body { min-width: 0; }
+@media (max-width: 520px) {
+  /* Give the message box the full width; buttons move to a row beneath it. */
+  .composer { flex-wrap: wrap; }
+  .composer textarea { flex: 1 1 100%; }
+  .composer-btns { flex-direction: row; }
+}
