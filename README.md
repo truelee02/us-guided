@@ -103,14 +103,21 @@ This repo is the foundation, not a finished product. Before charging anyone:
    package) when a partner posts or a daily focus is ready.
    `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` go in `.env`.
 6. **Capacitor wrap for the app stores** — `npx @capacitor/cli init`, point
-   it at the hosted URL (or bundle `public/`), add the push-notifications
+   it at the hosted URL (or bundle the app's web files), add the push-notifications
    plugin, then build for Apple (needs an Apple Developer account, ~$99/yr)
    and Google Play (~$25 one-time). The Guide in the store build still calls
    this same server, so the Gemini key stays server-side.
-7. **Product/legal basics before selling** — privacy policy and terms
-   (you're storing relationship conversations and birth data), account
-   deletion, password reset by email (needs a mail provider), rate limiting,
-   and backups of `data/`.
+7. **Product/legal basics before selling** — DONE Nov 17, 2026: privacy
+   policy and terms pages (`privacy.html`, `terms.html`), in-app account
+   deletion (Us tab, password-confirmed), password reset by email
+   (forgot/reset flow; sends via Resend when `RESEND_API_KEY` is set,
+   otherwise the link is written to the server log), change-password while
+   signed in, and automatic backups (snapshots of the data store at
+   startup and every 6 hours into `data/backups`, newest 30 kept; a
+   snapshot is also taken before every account deletion). Owner
+   operations sit behind `ADMIN_SECRET` (`/api/admin/backup`,
+   `/api/admin/snapshot`, `/api/admin/reset-password`). Still open:
+   rate limiting.
 
 ## Notes / known simplifications in this foundation
 

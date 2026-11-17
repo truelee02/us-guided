@@ -20,6 +20,8 @@ if (fs.existsSync(envPath)) {
 const express = require('express');
 const store = require('./db');
 const ai = require('./ai');
+const backups = require('./backups');
+const mailer = require('./mailer');
 const { astroSummary } = require('./astro');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -58,6 +60,10 @@ function setSession(res, userId) {
   const token = crypto.randomBytes(24).toString('base64url');
   store.createSession(token, userId);
   res.setHeader('Set-Cookie', `sid=${encodeURIComponent(signToken(token))}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}${COOKIE_SECURE}`);
+}
+function currentToken(req) {
+  const cookie = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('sid='));
+  return cookie ? decodeURIComponent(cookie.slice(4)).split('.')[0] : null;
 }
 function clearSession(req, res) {
   const cookie = (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('sid='));
@@ -156,6 +162,76 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => { clearSession(req, res); res.json({ ok: true }); });
+
+/* Password reset: "forgot" emails a one-hour, single-use link. The raw
+   token only ever exists in the email — the store keeps its SHA-256 hash.
+   The response is the same whether or not the email has an account, so
+   the endpoint can't be used to probe who is signed up. */
+app.post('/api/auth/forgot', async (req, res) => {
+  const email = String((req.body || {}).email || '').toLowerCase();
+  const user = email ? store.getUserByEmail(email) : null;
+  if (user) {
+    store.deleteResetTokensForUser(user.id);
+    const raw = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+    store.createResetToken({
+      user_id: user.id, token_hash: tokenHash,
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    });
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const base = process.env.APP_URL || `${proto}://${req.get('host')}`;
+    await mailer.sendPasswordReset(user.email, `${base}/?reset=${raw}`);
+  }
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/reset', (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ error: 'A reset link and a new password are required.' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
+  const rec = store.getResetToken(tokenHash);
+  if (!rec) return res.status(400).json({ error: 'That reset link isn\'t valid. Request a new one.' });
+  if (new Date(rec.expires_at).getTime() < Date.now()) {
+    store.deleteResetToken(tokenHash);
+    return res.status(400).json({ error: 'That reset link has expired. Request a new one.' });
+  }
+  const { salt, hash } = hashPassword(String(password));
+  store.updateUserPassword(rec.user_id, salt, hash);
+  store.deleteResetTokensForUser(rec.user_id);
+  store.deleteSessionsForUser(rec.user_id); // sign out everywhere; log in fresh
+  res.json({ ok: true });
+});
+
+/* Change password while signed in. Other devices are signed out; this
+   one stays signed in. */
+app.post('/api/auth/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!verifyPassword(String(currentPassword || ''), req.user.salt, req.user.password_hash)) {
+    return res.status(401).json({ error: 'Your current password is wrong.' });
+  }
+  if (!newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  const { salt, hash } = hashPassword(String(newPassword));
+  store.updateUserPassword(req.user.id, salt, hash);
+  store.deleteSessionsForUser(req.user.id, currentToken(req));
+  res.json({ ok: true });
+});
+
+/* Delete my account. Requires the password, takes a safety backup first,
+   and removes the account, its profile, and everything it authored. If it
+   was the household's last account, the household goes too (see db.js). */
+app.delete('/api/account', requireAuth, (req, res) => {
+  const { password } = req.body || {};
+  if (!verifyPassword(String(password || ''), req.user.salt, req.user.password_hash)) {
+    return res.status(401).json({ error: 'Password is wrong — account not deleted.' });
+  }
+  backups.snapshot('pre-account-delete');
+  const result = store.deleteAccount(req.user.id);
+  clearSession(req, res);
+  res.json({ ok: true, ...result });
+});
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
   const household = store.getHousehold(req.user.household_id);
@@ -341,12 +417,49 @@ app.get('/api/weekly', requireAuth, (req, res) => {
 
 /* ---------------- health & static ---------------- */
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, db: store.mode, ai: ai.STUB ? 'stub' : 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.6-flash' });
+  res.json({ ok: true, db: store.mode, ai: ai.STUB ? 'stub' : 'gemini', model: process.env.GEMINI_MODEL || 'gemini-3.6-flash', backups: backups.status() });
+});
+
+/* Owner-only operations, gated by the ADMIN_SECRET env var and the
+   x-admin-secret header. With no secret configured these routes do not
+   exist (404). They let the owner pull an off-site backup copy and
+   recover a locked-out tester's account during the testing phase. */
+function adminOk(req) {
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret) return false;
+  const given = Buffer.from(req.get('x-admin-secret') || '');
+  const expected = Buffer.from(secret);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+app.get('/api/admin/backup', (req, res) => {
+  if (!adminOk(req)) return res.status(404).end();
+  const file = backups.mainFile();
+  if (!file) return res.status(404).json({ error: 'No data file yet.' });
+  res.download(file, path.basename(file));
+});
+app.post('/api/admin/snapshot', (req, res) => {
+  if (!adminOk(req)) return res.status(404).end();
+  res.json({ ok: true, snapshot: backups.snapshot('admin') });
+});
+app.post('/api/admin/reset-password', (req, res) => {
+  if (!adminOk(req)) return res.status(404).end();
+  const { email, newPassword } = req.body || {};
+  const user = email ? store.getUserByEmail(String(email).toLowerCase()) : null;
+  if (!user) return res.status(404).json({ error: 'No account with that email.' });
+  if (!newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+  const { salt, hash } = hashPassword(String(newPassword));
+  store.updateUserPassword(user.id, salt, hash);
+  store.deleteResetTokensForUser(user.id);
+  store.deleteSessionsForUser(user.id);
+  res.json({ ok: true });
 });
 
 /* Web assets (index.html, app.js, styles.css, ...) live in this same folder.
    Never serve the server-side code, dependencies, or the data directory. */
 const BLOCKED_PATHS = new Set(['/server.js', '/db.js', '/ai.js', '/astro.js',
+  '/backups.js', '/mailer.js',
   '/package.json', '/package-lock.json', '/render.yaml', '/README.md',
   '/.env.example', '/.gitignore']);
 app.use((req, res, next) => {
@@ -358,6 +471,8 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname, { index: false }));
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+backups.start();
 
 app.listen(PORT, () => {
   console.log(`Us, Guided listening on http://localhost:${PORT} (db: ${store.mode}, ai: ${ai.STUB ? 'STUB' : 'Gemini'})`);

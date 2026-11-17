@@ -1,7 +1,7 @@
 /* Basic service worker: cache the app shell so the app is installable and
    opens fast. API calls always go to the network. */
-const CACHE = 'sra-v1';
-const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.svg'];
+const CACHE = 'sra-v3';
+const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png', '/privacy.html', '/terms.html'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -27,7 +27,7 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let data = { title: 'Us, Guided', body: 'Your partner shared something in the chat.' };
   try { data = { ...data, ...e.data.json() }; } catch (_) { /* keep defaults */ }
-  e.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: '/icon.svg' }));
+  e.waitUntil(self.registration.showNotification(data.title, { body: data.body, icon: '/icon-192.png' }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

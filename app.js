@@ -108,17 +108,50 @@ function scoreQuiz(quiz, name) {
 }
 
 /* ================= Auth ================= */
+function showAuth(which) {
+  document.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.authTab === which));
+  $('#login-form').hidden = which !== 'login';
+  $('#signup-form').hidden = which !== 'signup';
+  $('#join-form').hidden = which !== 'join';
+  $('#forgot-form').hidden = which !== 'forgot';
+  $('#reset-form').hidden = which !== 'reset';
+  $('#forgot-row').hidden = which !== 'login';
+  $('#auth-error').hidden = true;
+}
 document.querySelectorAll('.auth-tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    $('#login-form').hidden = btn.dataset.authTab !== 'login';
-    $('#signup-form').hidden = btn.dataset.authTab !== 'signup';
-    $('#join-form').hidden = btn.dataset.authTab !== 'join';
-    $('#auth-error').hidden = true;
-  });
+  btn.addEventListener('click', () => showAuth(btn.dataset.authTab));
 });
 
 function authError(msg) { const el = $('#auth-error'); el.textContent = msg; el.hidden = false; }
+function authNote(msg) { const el = $('#auth-note'); el.textContent = msg; el.hidden = false; }
+
+/* Forgot / reset password */
+let resetToken = new URLSearchParams(location.search).get('reset');
+$('#forgot-link').addEventListener('click', (e) => { e.preventDefault(); showAuth('forgot'); });
+document.querySelectorAll('.back-to-login').forEach((a) => {
+  a.addEventListener('click', (e) => { e.preventDefault(); showAuth('login'); });
+});
+$('#forgot-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = new FormData(e.target).get('email');
+  try { await api('POST', '/api/auth/forgot', { email }); } catch (_) { /* same note either way */ }
+  showAuth('login');
+  authNote('If that email has an account, a password reset link is on its way. It expires in 1 hour.');
+});
+$('#reset-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  if (fd.get('password') !== fd.get('password2')) { authError('The two passwords don\'t match.'); return; }
+  try {
+    await api('POST', '/api/auth/reset', { token: resetToken, password: fd.get('password') });
+    resetToken = null;
+    history.replaceState({}, '', location.pathname);
+    e.target.reset();
+    showAuth('login');
+    authNote('Password updated — log in with your new password.');
+  } catch (err) { authError(err.message); }
+});
+if (resetToken) showAuth('reset');
 
 async function handleAuth(formId, url) {
   const form = $(formId);
@@ -398,6 +431,42 @@ $('#add-person-form').addEventListener('submit', async (e) => {
   loadPeople();
 });
 
+/* ================= Account: change password / delete ================= */
+$('#change-password-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#account-msg');
+  try {
+    await api('POST', '/api/auth/change-password', Object.fromEntries(new FormData(e.target)));
+    e.target.reset();
+    msg.textContent = 'Password changed. Other devices were signed out.';
+    msg.className = 'small note';
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+  }
+  msg.hidden = false;
+});
+$('#delete-open').addEventListener('click', () => {
+  $('#delete-form').hidden = false;
+  $('#delete-open').hidden = true;
+});
+$('#delete-cancel').addEventListener('click', () => {
+  $('#delete-form').hidden = true;
+  $('#delete-open').hidden = false;
+  $('#delete-error').hidden = true;
+});
+$('#delete-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('DELETE', '/api/account', { password: new FormData(e.target).get('password') });
+    location.reload(); // session is gone; boot lands back on the sign-in screen
+  } catch (err) {
+    const el = $('#delete-error');
+    el.textContent = err.message;
+    el.hidden = false;
+  }
+});
+
 /* ================= Boot ================= */
 async function boot() {
   try {
@@ -405,6 +474,8 @@ async function boot() {
     state.me = me;
     $('#auth-view').hidden = true;
     $('#app-view').hidden = false;
+    $('#account-email').textContent = me.user.email;
+    if (resetToken) { history.replaceState({}, '', location.pathname); resetToken = null; }
     const health = await api('GET', '/api/health').catch(() => null);
     if (health && health.ai === 'stub') $('#stub-badge').hidden = false;
     await loadPeople();

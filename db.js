@@ -67,6 +67,9 @@ function trySqlite() {
     CREATE TABLE IF NOT EXISTS daily_activities (
       id TEXT PRIMARY KEY, household_id TEXT NOT NULL, date_key TEXT NOT NULL,
       text TEXT NOT NULL, UNIQUE(household_id, date_key));
+    CREATE TABLE IF NOT EXISTS reset_tokens (
+      token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
   `);
   // Migration for databases created before scheduled messages existed.
   try { db.exec('ALTER TABLE messages ADD COLUMN scheduled_for TEXT'); } catch (_) {}
@@ -98,6 +101,51 @@ function trySqlite() {
       return s ? row('SELECT * FROM users WHERE id = ?', s.user_id) : null;
     },
     deleteSession(token) { run('DELETE FROM sessions WHERE token = ?', token); },
+    updateUserPassword(uid, salt, hash) {
+      run('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?', hash, salt, uid);
+    },
+    deleteSessionsForUser(uid, exceptToken) {
+      if (exceptToken) run('DELETE FROM sessions WHERE user_id = ? AND token != ?', uid, exceptToken);
+      else run('DELETE FROM sessions WHERE user_id = ?', uid);
+    },
+    createResetToken(t) {
+      run('INSERT INTO reset_tokens (token_hash, user_id, expires_at, created_at) VALUES (?,?,?,?)',
+        t.token_hash, t.user_id, t.expires_at, now());
+    },
+    getResetToken: (tokenHash) => row('SELECT * FROM reset_tokens WHERE token_hash = ?', tokenHash),
+    deleteResetToken(tokenHash) { run('DELETE FROM reset_tokens WHERE token_hash = ?', tokenHash); },
+    deleteResetTokensForUser(uid) { run('DELETE FROM reset_tokens WHERE user_id = ?', uid); },
+    /* Removes the user's account, their profile, and everything they
+       personally authored. If no accounts remain in the household, the
+       whole household and all of its data are removed too. */
+    deleteAccount(uid) {
+      const user = row('SELECT * FROM users WHERE id = ?', uid);
+      if (!user) return { householdDeleted: false };
+      const hid = user.household_id;
+      const person = row('SELECT * FROM people WHERE user_id = ?', uid);
+      run('DELETE FROM sessions WHERE user_id = ?', uid);
+      run('DELETE FROM reset_tokens WHERE user_id = ?', uid);
+      if (person) {
+        run('DELETE FROM messages WHERE person_id = ?', person.id);
+        run('DELETE FROM daily_focuses WHERE person_id = ?', person.id);
+        run('DELETE FROM reminders WHERE person_id = ?', person.id);
+        run('DELETE FROM people WHERE id = ?', person.id);
+      }
+      run('DELETE FROM users WHERE id = ?', uid);
+      const remaining = row('SELECT COUNT(*) AS n FROM users WHERE household_id = ?', hid);
+      if (!remaining || remaining.n === 0) {
+        run('DELETE FROM messages WHERE household_id = ?', hid);
+        run('DELETE FROM reminders WHERE household_id = ?', hid);
+        run('DELETE FROM date_ideas WHERE household_id = ?', hid);
+        run('DELETE FROM weekly_sets WHERE household_id = ?', hid);
+        run('DELETE FROM daily_focuses WHERE household_id = ?', hid);
+        run('DELETE FROM daily_activities WHERE household_id = ?', hid);
+        run('DELETE FROM people WHERE household_id = ?', hid);
+        run('DELETE FROM households WHERE id = ?', hid);
+        return { householdDeleted: true };
+      }
+      return { householdDeleted: false };
+    },
 
     createPerson(f) {
       const p = { id: id(), created_at: now(), birth_time_unknown: 0, astrology_opt_in: 0, profile_complete: 0, ...f };
@@ -191,8 +239,11 @@ function jsonStore() {
     data = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (_) {
     data = { households: [], users: [], sessions: [], people: [], messages: [],
-             reminders: [], date_ideas: [], weekly_sets: [], daily_focuses: [], daily_activities: [] };
+             reminders: [], date_ideas: [], weekly_sets: [], daily_focuses: [], daily_activities: [],
+             reset_tokens: [] };
   }
+  // Older data files predate password-reset tokens.
+  if (!Array.isArray(data.reset_tokens)) data.reset_tokens = [];
   const save = () => fs.writeFileSync(file, JSON.stringify(data, null, 2));
   const find = (arr, fn) => data[arr].find(fn) || null;
   const filter = (arr, fn) => data[arr].filter(fn);
@@ -217,6 +268,56 @@ function jsonStore() {
       return s ? find('users', (u) => u.id === s.user_id) : null;
     },
     deleteSession(token) { data.sessions = data.sessions.filter((s) => s.token !== token); save(); },
+    updateUserPassword(uid, salt, hash) {
+      const u = find('users', (x) => x.id === uid);
+      if (u) { u.password_hash = hash; u.salt = salt; save(); }
+    },
+    deleteSessionsForUser(uid, exceptToken) {
+      data.sessions = data.sessions.filter((s) => !(s.user_id === uid && s.token !== exceptToken));
+      save();
+    },
+    createResetToken(t) {
+      data.reset_tokens.push({ created_at: now(), ...t }); save();
+    },
+    getResetToken: (tokenHash) => find('reset_tokens', (t) => t.token_hash === tokenHash),
+    deleteResetToken(tokenHash) {
+      data.reset_tokens = data.reset_tokens.filter((t) => t.token_hash !== tokenHash); save();
+    },
+    deleteResetTokensForUser(uid) {
+      data.reset_tokens = data.reset_tokens.filter((t) => t.user_id !== uid); save();
+    },
+    /* Removes the user's account, their profile, and everything they
+       personally authored. If no accounts remain in the household, the
+       whole household and all of its data are removed too. */
+    deleteAccount(uid) {
+      const user = find('users', (u) => u.id === uid);
+      if (!user) return { householdDeleted: false };
+      const hid = user.household_id;
+      const person = find('people', (p) => p.user_id === uid);
+      data.sessions = data.sessions.filter((s) => s.user_id !== uid);
+      data.reset_tokens = data.reset_tokens.filter((t) => t.user_id !== uid);
+      if (person) {
+        data.messages = data.messages.filter((m) => m.person_id !== person.id);
+        data.daily_focuses = data.daily_focuses.filter((f) => f.person_id !== person.id);
+        data.reminders = data.reminders.filter((r) => r.person_id !== person.id);
+        data.people = data.people.filter((p) => p.id !== person.id);
+      }
+      data.users = data.users.filter((u) => u.id !== uid);
+      if (!data.users.some((u) => u.household_id === hid)) {
+        data.messages = data.messages.filter((m) => m.household_id !== hid);
+        data.reminders = data.reminders.filter((r) => r.household_id !== hid);
+        data.date_ideas = data.date_ideas.filter((d) => d.household_id !== hid);
+        data.weekly_sets = data.weekly_sets.filter((w) => w.household_id !== hid);
+        data.daily_focuses = data.daily_focuses.filter((f) => f.household_id !== hid);
+        data.daily_activities = data.daily_activities.filter((a) => a.household_id !== hid);
+        data.people = data.people.filter((p) => p.household_id !== hid);
+        data.households = data.households.filter((h) => h.id !== hid);
+        save();
+        return { householdDeleted: true };
+      }
+      save();
+      return { householdDeleted: false };
+    },
 
     createPerson(f) {
       const p = { id: id(), created_at: now(), birth_time_unknown: 0, astrology_opt_in: 0, profile_complete: 0, ...f };

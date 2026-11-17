@@ -7,6 +7,7 @@
 <meta name="theme-color" content="#7c5cbf">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -27,6 +28,7 @@
     <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
     <button type="submit" class="primary">Log in</button>
   </form>
+  <p class="muted small" id="forgot-row"><a href="#" id="forgot-link">Forgot your password?</a></p>
 
   <form id="signup-form" class="auth-form" hidden>
     <label>Your name <input type="text" name="name" required autocomplete="name"></label>
@@ -43,7 +45,25 @@
     <label>Invite code <input type="text" name="code" required placeholder="e.g. 9F3AC21B" style="text-transform:uppercase"></label>
     <button type="submit" class="primary">Join household</button>
   </form>
+
+  <form id="forgot-form" class="auth-form" hidden>
+    <p class="muted small">Enter your account email and we'll send you a link to set a new password. Links expire after 1 hour.</p>
+    <label>Email <input type="email" name="email" required autocomplete="email"></label>
+    <button type="submit" class="primary">Email me a reset link</button>
+    <p class="muted small"><a href="#" class="back-to-login">Back to log in</a></p>
+  </form>
+
+  <form id="reset-form" class="auth-form" hidden>
+    <p class="muted small">Choose a new password for your account.</p>
+    <label>New password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <label>New password again <input type="password" name="password2" required minlength="8" autocomplete="new-password"></label>
+    <button type="submit" class="primary">Set new password</button>
+    <p class="muted small"><a href="#" class="back-to-login">Back to log in</a></p>
+  </form>
+
+  <p id="auth-note" class="note" hidden></p>
   <p id="auth-error" class="error" hidden></p>
+  <p class="muted small auth-legal">By creating an account you agree to our <a href="/terms.html">Terms of Service</a>. Read our <a href="/privacy.html">Privacy Policy</a>.</p>
 </main>
 
 <!-- ============ APP VIEW ============ -->
@@ -154,6 +174,31 @@
         <button type="submit" class="primary">Add person</button>
       </form>
     </div>
+
+    <div class="card">
+      <h3>🔐 Your account</h3>
+      <p class="muted small">Signed in as <strong id="account-email">—</strong></p>
+      <form id="change-password-form" class="stack-form">
+        <label>Current password <input type="password" name="currentPassword" required autocomplete="current-password"></label>
+        <label>New password (8+ characters) <input type="password" name="newPassword" required minlength="8" autocomplete="new-password"></label>
+        <button type="submit" class="primary">Change password</button>
+      </form>
+      <p id="account-msg" class="small" hidden></p>
+      <hr class="sep">
+      <h4 class="danger-title">Delete my account</h4>
+      <p class="muted small">Deleting your account permanently removes your profile, your messages, your daily focuses, and your reminders from this household. Your partner keeps their own messages and the Guide's replies. If yours is the only account in the household, the entire household and everything in it is deleted. This cannot be undone.</p>
+      <button type="button" id="delete-open" class="danger">Delete my account…</button>
+      <form id="delete-form" class="stack-form" hidden>
+        <label>Type your password to confirm <input type="password" name="password" required autocomplete="current-password"></label>
+        <div class="modal-actions">
+          <button type="button" id="delete-cancel" class="ghost">Keep my account</button>
+          <button type="submit" class="danger">Permanently delete</button>
+        </div>
+      </form>
+      <p id="delete-error" class="error" hidden></p>
+    </div>
+
+    <p class="muted small center-links"><a href="/privacy.html">Privacy Policy</a> · <a href="/terms.html">Terms of Service</a></p>
   </section>
 </div>
 
