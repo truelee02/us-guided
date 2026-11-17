@@ -3,9 +3,14 @@
 
 const $ = (sel) => document.querySelector(sel);
 const api = async (method, url, body) => {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  // Tell the server which space we're looking at; without it the server
+  // falls back to our earliest space.
+  if (state.activeSpaceId) headers['X-Space-Id'] = state.activeSpaceId;
   const res = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
@@ -14,7 +19,12 @@ const api = async (method, url, body) => {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-let state = { me: null, people: [], messages: [] };
+let state = {
+  me: null, people: [], messages: [], spaces: [],
+  activeSpaceId: localStorage.getItem('ug-active-space') || null,
+  myPersonId: null,
+};
+const activeSpace = () => state.spaces.find((s) => s.id === state.activeSpaceId) || state.spaces[0] || null;
 
 /* ================= Quizzes ================= */
 const LOVE_QUIZ = [
@@ -200,7 +210,7 @@ async function loadFocuses() {
 async function loadMessages() {
   const { messages } = await api('GET', '/api/messages');
   state.messages = messages;
-  const mine = state.me?.person?.id;
+  const mine = state.myPersonId;
   $('#messages').innerHTML = messages.map((m) => `
     <div class="msg ${m.kind === 'guide' ? 'guide' : (m.person_id === mine ? 'mine' : 'theirs')}">
       <div class="msg-author">${esc(m.author_name)}${m.reworded ? '' : ''}</div>
@@ -307,6 +317,9 @@ async function loadTogether() {
   const [rem, ideas, weekly] = await Promise.all([
     api('GET', '/api/reminders'), api('GET', '/api/date-ideas'), api('GET', '/api/weekly'),
   ]);
+  const isFamily = activeSpace()?.kind === 'family';
+  $('#weekly-ideas-title').textContent = isFamily ? '🤲 Things to do together this week' : '🎲 This week\'s date ideas';
+  $('#saved-ideas-title').textContent = isFamily ? '💡 Saved ideas' : '💡 Saved date ideas';
   $('#daily-activity').textContent = weekly.dailyActivity?.text || '—';
   const wa = weekly.weeklyActivity || {};
   $('#weekly-activity').innerHTML = `<strong>${esc(wa.title || '')}</strong> <span class="badge">${esc(wa.type || '')}</span><br>${esc(wa.body || '')}`;
@@ -354,11 +367,15 @@ $('#idea-form').addEventListener('submit', async (e) => {
 async function loadPeople() {
   const { people } = await api('GET', '/api/people');
   state.people = people;
-  $('#invite-code').textContent = state.me?.household?.invite_code || '—';
+  const mine = people.find((p) => p.user_id === state.me?.user?.id) || null;
+  state.myPersonId = mine ? mine.id : null;
+  const space = activeSpace();
+  $('#invite-code').textContent = space?.invite_code || '—';
+  $('#active-space-name').textContent = space?.name || 'this space';
   wireInvite();
   $('#people-list').innerHTML = people.map((p) => `
     <div class="card person-card">
-      <h3>${esc(p.name)} ${p.id === state.me?.person?.id ? '<span class="badge">you</span>' : ''}</h3>
+      <h3>${esc(p.name)} ${p.id === state.myPersonId ? '<span class="badge">you</span>' : ''}</h3>
       <ul class="plain-list small">
         ${p.birthday ? `<li>🎂 ${esc(p.birthday)}${p.sun_sign ? ` · ☀️ ${esc(p.sun_sign)}${p.rising_sign ? ` · ⬆️ rising ${esc(p.rising_sign)}` : ''}` : ''}</li>` : ''}
         ${p.love_language ? `<li>💗 Love language: ${esc(p.love_language)}</li>` : ''}
@@ -378,15 +395,111 @@ async function loadPeople() {
    never sees or contacts the person being invited. Where the share sheet
    isn't available, Text / Email / Copy options appear instead. */
 function inviteText() {
-  const code = state.me?.household?.invite_code || '';
-  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Open ${location.origin}\n2. Tap "Join with invite"\n3. Use this code: ${code}`;
+  const space = activeSpace();
+  const code = space?.invite_code || '';
+  const where = space?.name ? `my "${space.name}" space` : 'my space';
+  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Open ${location.origin}\n2. Tap "Join with invite"\n3. Use this code: ${code}\n\nThat code joins ${where}.`;
 }
 function wireInvite() {
-  if (!state.me?.household?.invite_code) return;
+  if (!activeSpace()?.invite_code) return;
   const text = inviteText();
   $('#invite-sms').href = `sms:?&body=${encodeURIComponent(text)}`;
   $('#invite-mail').href = `mailto:?subject=${encodeURIComponent('Join me on Us, Guided')}&body=${encodeURIComponent(text)}`;
 }
+
+/* ================= Spaces =================
+   One account, many spaces. The switcher at the top picks the active
+   space; every tab reloads for it, and the choice is remembered on this
+   device (localStorage) so the app reopens where you left it. */
+function renderSwitcher() {
+  const sel = $('#space-switcher');
+  sel.innerHTML = state.spaces.map((s) =>
+    `<option value="${s.id}" ${s.id === state.activeSpaceId ? 'selected' : ''}>${esc(s.name)} ${s.kind === 'family' ? '👨‍👩‍👧' : '💑'}</option>`).join('');
+}
+
+function renderSpaces() {
+  renderSwitcher();
+  $('#spaces-list').innerHTML = state.spaces.map((s) => `
+    <div class="space-row ${s.id === state.activeSpaceId ? 'active' : ''}">
+      <span class="space-row-main">
+        <strong>${esc(s.name)}</strong>
+        <span class="badge">${s.kind === 'family' ? 'Family' : 'Couple'}</span>
+        ${s.role === 'owner' ? '<span class="badge">owner</span>' : ''}
+        <br><span class="muted small">${s.member_count} member${s.member_count === 1 ? '' : 's'} · invite code <strong>${esc(s.invite_code)}</strong></span>
+      </span>
+      ${s.id === state.activeSpaceId
+        ? '<span class="muted small">viewing</span>'
+        : `<button type="button" class="ghost small-btn" data-switch-space="${s.id}">Switch</button>`}
+    </div>`).join('');
+  document.querySelectorAll('[data-switch-space]').forEach((b) => {
+    b.addEventListener('click', () => switchSpace(b.dataset.switchSpace));
+  });
+}
+
+async function refreshSpaces() {
+  const { spaces } = await api('GET', '/api/spaces');
+  state.spaces = spaces;
+  if (!state.spaces.some((s) => s.id === state.activeSpaceId)) {
+    state.activeSpaceId = state.spaces[0]?.id || null;
+  }
+  renderSpaces();
+}
+
+async function switchSpace(spaceId) {
+  if (!state.spaces.some((s) => s.id === spaceId)) return;
+  state.activeSpaceId = spaceId;
+  localStorage.setItem('ug-active-space', spaceId);
+  renderSpaces();
+  await loadPeople();
+  await loadFocuses();
+  await loadMessages();
+  await loadScheduled();
+  if (!$('#tab-together').hidden) loadTogether();
+}
+
+$('#space-switcher').addEventListener('change', (e) => switchSpace(e.target.value));
+$('#new-space-btn').addEventListener('click', () => {
+  document.querySelector('.tab[data-tab="us"]').click();
+  $('#space-name').focus();
+});
+
+$('#space-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#space-msg');
+  try {
+    const { space } = await api('POST', '/api/spaces', {
+      name: $('#space-name').value, kind: $('#space-kind').value,
+    });
+    $('#space-name').value = '';
+    await refreshSpaces();
+    await switchSpace(space.id);
+    msg.textContent = `Created "${space.name}" — invite people with its code below.`;
+    msg.className = 'small note';
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+  }
+  msg.hidden = false;
+});
+
+$('#space-join-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = $('#space-msg');
+  try {
+    const { space, alreadyMember } = await api('POST', '/api/spaces/join', {
+      code: $('#space-join-code').value,
+    });
+    $('#space-join-code').value = '';
+    await refreshSpaces();
+    await switchSpace(space.id);
+    msg.textContent = alreadyMember ? `You're already in "${space.name}".` : `Joined "${space.name}" — say hello in the Talk tab.`;
+    msg.className = 'small note';
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+  }
+  msg.hidden = false;
+});
 $('#share-invite').addEventListener('click', async () => {
   if (navigator.share) {
     try { await navigator.share({ title: 'Us, Guided', text: inviteText() }); } catch (_) { /* sheet closed */ }
@@ -506,12 +619,18 @@ async function boot() {
   try {
     const me = await api('GET', '/api/auth/me');
     state.me = me;
+    state.spaces = me.spaces || [];
+    if (!state.spaces.some((s) => s.id === state.activeSpaceId)) {
+      state.activeSpaceId = state.spaces[0]?.id || null;
+    }
+    if (state.activeSpaceId) localStorage.setItem('ug-active-space', state.activeSpaceId);
     $('#auth-view').hidden = true;
     $('#app-view').hidden = false;
     $('#account-email').textContent = me.user.email;
     if (resetToken) { history.replaceState({}, '', location.pathname); resetToken = null; }
     const health = await api('GET', '/api/health').catch(() => null);
     if (health && health.ai === 'stub') $('#stub-badge').hidden = false;
+    renderSpaces();
     await loadPeople();
     await loadFocuses();
     await loadMessages();

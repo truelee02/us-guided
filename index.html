@@ -35,7 +35,7 @@
     <label>Email <input type="email" name="email" required autocomplete="email"></label>
     <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
     <button type="submit" class="primary">Create our space</button>
-    <p class="muted small">Creates a household and gives you an invite code to share with your partner.</p>
+    <p class="muted small">Creates your first space and gives you an invite code to share with your partner. You can add more spaces later — one for your family, one for anyone you want a guided chat with.</p>
   </form>
 
   <form id="join-form" class="auth-form" hidden>
@@ -43,7 +43,7 @@
     <label>Email <input type="email" name="email" required autocomplete="email"></label>
     <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
     <label>Invite code <input type="text" name="code" required placeholder="e.g. 9F3AC21B" style="text-transform:uppercase"></label>
-    <button type="submit" class="primary">Join household</button>
+    <button type="submit" class="primary">Join space</button>
   </form>
 
   <form id="forgot-form" class="auth-form" hidden>
@@ -73,6 +73,12 @@
     <span id="stub-badge" class="badge" hidden>STUB AI</span>
     <button id="logout-btn" class="ghost">Log out</button>
   </header>
+
+  <div class="space-bar">
+    <label class="space-bar-label" for="space-switcher">Space</label>
+    <select id="space-switcher" aria-label="Choose a space"></select>
+    <button type="button" id="new-space-btn" class="ghost">＋ New space</button>
+  </div>
 
   <nav class="tabs">
     <button data-tab="talk" class="tab active">Talk</button>
@@ -125,7 +131,7 @@
     </div>
 
     <div class="card">
-      <h3>🎲 This week's date ideas</h3>
+      <h3 id="weekly-ideas-title">🎲 This week's date ideas</h3>
       <ul id="weekly-ideas" class="plain-list"></ul>
     </div>
 
@@ -140,7 +146,7 @@
     </div>
 
     <div class="card">
-      <h3>💡 Saved date ideas</h3>
+      <h3 id="saved-ideas-title">💡 Saved date ideas</h3>
       <ul id="date-ideas" class="plain-list"></ul>
       <form id="idea-form" class="inline-form">
         <input type="text" id="idea-title" placeholder="Idea…" required>
@@ -158,9 +164,31 @@
   <!-- ===== US ===== -->
   <section id="tab-us" class="tab-panel" hidden>
     <div class="card">
-      <h3>🏠 Your household</h3>
+      <h3>🏠 Your spaces</h3>
+      <p class="muted small">Each space is its own guided chat — one with your partner, one with your family, whoever you like. Everything (chat, profiles, reminders) stays separate per space.</p>
+      <div id="spaces-list"></div>
+      <form id="space-form" class="stack-form">
+        <label>New space name <input type="text" id="space-name" placeholder="e.g. Me &amp; the girls" required></label>
+        <label>Kind
+          <select id="space-kind">
+            <option value="couple">Couple — two-person space</option>
+            <option value="family">Family — group space</option>
+          </select>
+        </label>
+        <button type="submit" class="primary">Create space</button>
+      </form>
+      <hr class="sep">
+      <form id="space-join-form" class="inline-form">
+        <input type="text" id="space-join-code" placeholder="Invite code" style="text-transform:uppercase" required>
+        <button type="submit" class="ghost">Join a space</button>
+      </form>
+      <p id="space-msg" class="small" hidden></p>
+    </div>
+
+    <div class="card">
+      <h3>🔗 Invite to <span id="active-space-name">this space</span></h3>
       <p>Invite code: <strong id="invite-code">—</strong></p>
-      <p class="muted small">Share this code so your partner (or family member) can join this same household from the sign-up screen.</p>
+      <p class="muted small">Share this code so someone can join this space — from the sign-up screen, or with "Join a space" above if they already have an account.</p>
       <div class="invite-actions">
         <button type="button" id="share-invite" class="primary">📤 Share invite</button>
       </div>
@@ -195,7 +223,7 @@
       <p id="account-msg" class="small" hidden></p>
       <hr class="sep">
       <h4 class="danger-title">Delete my account</h4>
-      <p class="muted small">Deleting your account permanently removes your profile, your messages, your daily focuses, and your reminders from this household. Your partner keeps their own messages and the Guide's replies. If yours is the only account in the household, the entire household and everything in it is deleted. This cannot be undone.</p>
+      <p class="muted small">Deleting your account permanently removes your profile, your messages, your daily focuses, and your reminders from every space you belong to. The other members keep their own messages and the Guide's replies. A space you own passes to its earliest remaining member; a space left with no members at all is deleted entirely, with everything in it. This cannot be undone.</p>
       <button type="button" id="delete-open" class="danger">Delete my account…</button>
       <form id="delete-form" class="stack-form" hidden>
         <label>Type your password to confirm <input type="password" name="password" required autocomplete="current-password"></label>

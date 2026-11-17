@@ -56,8 +56,17 @@ function personContext(p) {
   return lines.join('\n');
 }
 
-function householdContext(people) {
+function spaceContext(people) {
   return people.map(personContext).join('\n');
+}
+
+/* How the Guide should frame this space: a couple's two-person chat, or a
+   family group chat it mediates as a whole. */
+function spaceFraming(space) {
+  if (space && space.kind === 'family') {
+    return `This is a FAMILY group chat${space.name ? ` called "${space.name}"` : ''} with several members. Address the group as a whole, not as a couple. You may speak to members by name, give each person something specific, and invite members by name to respond.`;
+  }
+  return `This is a couple's shared chat${space && space.name ? ` called "${space.name}"` : ''}.`;
 }
 
 /* ---------------- Message cleaning ---------------- */
@@ -78,12 +87,13 @@ function stubClean(text) {
   return { text: out, changed: out !== text, stub: true };
 }
 
-async function cleanMessage(rawText, author, people) {
+async function cleanMessage(rawText, author, people, space) {
   if (STUB) return stubClean(rawText);
   const prompt = `You are the Guide in a shared relationship chat. Rewrite the message below so it keeps the writer's real point and voice but removes anything hostile, insulting, hurtful, blaming, or unproductive. Use calm, healthy, "I feel / I need" language where it fits. If the message is already kind and productive, return it unchanged.
+${spaceFraming(space)}
 Writer: ${author.name}
-People in this household:
-${householdContext(people)}
+People in this space:
+${spaceContext(people)}
 Message: """${rawText}"""
 Respond with ONLY JSON: {"text": "<final message>", "changed": true|false}`;
   try {
@@ -96,7 +106,20 @@ Respond with ONLY JSON: {"text": "<final message>", "changed": true|false}`;
 }
 
 /* ---------------- Guide advice reply ---------------- */
-function stubAdvice(author, other) {
+function stubAdvice(author, other, others, space) {
+  if (space && space.kind === 'family') {
+    const names = (others || []).map((p) => p.name);
+    const list = names.length ? names.join(', ') : 'everyone';
+    return {
+      text:
+        `[Stub Guide] Thank you for putting that into words calmly, ${author.name}.\n\n` +
+        `For ${author.name}: one thing to try is naming the feeling underneath the frustration before asking for a change — it lands softer and is easier to hear.\n` +
+        (names.length ? `For ${list}: listening all the way through before responding, and repeating the main point back in your own words, would help ${author.name} feel heard.\n` : '') +
+        `\nA question for the whole group: what would "good enough" look like here for everyone?\n\n` +
+        `${list} — ${author.name} shared something with the group. When you're ready, your responses matter, and the Guide will help each of you word them kindly too.`,
+      stub: true,
+    };
+  }
   const otherName = other ? other.name : 'your partner';
   return {
     text:
@@ -109,25 +132,28 @@ function stubAdvice(author, other) {
   };
 }
 
-async function guideAdvice({ author, other, postedText, people, recentMessages }) {
-  if (STUB) return stubAdvice(author, other);
-  const prompt = `You are the Guide in a shared relationship chat. ${author.name} just posted this message (already cleaned up):
+async function guideAdvice({ author, other, others, postedText, people, recentMessages, space }) {
+  const othersList = others || (other ? [other] : []);
+  if (STUB) return stubAdvice(author, other, othersList, space);
+  const isFamily = space && space.kind === 'family';
+  const inviteNames = othersList.length ? othersList.map((p) => p.name).join(', ') : (isFamily ? 'the other members' : 'the other person');
+  const prompt = `You are the Guide in a shared relationship chat. ${spaceFraming(space)} ${author.name} just posted this message (already cleaned up):
 """${postedText}"""
-People:
-${householdContext(people)}
+People in this space:
+${spaceContext(people)}
 Recent chat (oldest to newest):
 ${recentMessages.slice(-8).map((m) => `${m.kind === 'guide' ? 'Guide' : m.author_name}: ${m.body}`).join('\n')}
 
 Write a short, warm reply that:
-1. Suggests what EACH person could do better or differently in this situation (be specific, balanced, no side-taking).
+1. Suggests what EACH person could do better or differently in this situation (be specific, balanced, no side-taking).${isFamily ? ' Address the group as a whole where it fits.' : ''}
 2. Asks one or two questions that would help understand the issue more deeply.
-3. Invites ${other ? other.name : 'the other person'} by name to respond, noting the Guide will help them word their reply calmly too.
+3. Invites ${inviteNames} by name to respond, noting the Guide will help them word their reply calmly too.
 Never mention astrology for anyone who has not opted in (only opted-in people's signs appear above). Keep it under 220 words, plain paragraphs.`;
   try {
     return { text: await gemini(prompt), stub: false };
   } catch (e) {
     console.error('[ai] guideAdvice failed, using stub:', e.message);
-    return stubAdvice(author, other);
+    return stubAdvice(author, other, othersList, space);
   }
 }
 
@@ -152,10 +178,11 @@ function stubFocus(person, partner) {
   return list[seed % list.length];
 }
 
-async function dailyFocus(person, partner, people) {
+async function dailyFocus(person, partner, people, space) {
   if (STUB) return { text: stubFocus(person, partner), stub: true };
-  const prompt = `You are the Guide. Write ONE short daily focus (a single sentence, an action, not advice-about-advice) for ${person.name}. It should be something concrete they can do today for ${partner ? partner.name : 'their partner'}, grounded in their profiles:
-${householdContext(people)}
+  const isFamily = space && space.kind === 'family';
+  const prompt = `You are the Guide. Write ONE short daily focus (a single sentence, an action, not advice-about-advice) for ${person.name}. It should be something concrete they can do today for ${partner ? partner.name : (isFamily ? 'their family' : 'their partner')}${isFamily ? ' — this is a family group, so frame it toward the family, not a partner' : ''}, grounded in their profiles:
+${spaceContext(people)}
 Examples of the style: "Give your partner a 7 second hug today." / "Compliment your partner on something specific today."
 Respond with ONLY the sentence.`;
   try {

@@ -110,17 +110,38 @@ hr.sep { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
    Flex children get min-width: 0 so long text wraps instead of stretching
    the layout, and long words break rather than overflow. */
 html, body { overflow-x: hidden; }
-.composer textarea { min-width: 0; }
+@supports (overflow: clip) {
+  /* clip is stricter than hidden: no sideways scroll container at all. */
+  html, body { overflow-x: clip; }
+}
+img, svg, video { max-width: 100%; }
+.composer textarea { min-width: 0; max-width: 100%; }
 .msg, .sched-body, .focus-card span, .reminder span { overflow-wrap: break-word; }
 .sched-body { min-width: 0; }
+.topbar { flex-wrap: wrap; }
+.plain-list li { overflow-wrap: break-word; }
 @media (max-width: 520px) {
-  /* Give the message box the full width; buttons move to a row beneath it. */
+  /* Give the message box the full width; buttons move to a row beneath it
+     and share that row evenly, so they can never run past the edge. */
   .composer { flex-wrap: wrap; }
   .composer textarea { flex: 1 1 100%; }
-  .composer-btns { flex-direction: row; }
+  .composer-btns { flex-direction: row; flex: 1 1 100%; }
+  .composer-btns button { flex: 1; }
 }
 .invite-actions { margin: 10px 0 4px; }
 a.ghost.chip-link {
   text-decoration: none; color: var(--ink); display: inline-block;
   border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; background: none;
 }
+/* Spaces: switcher bar + the Us tab's space list. min-width: 0 keeps long
+   space names wrapping on phones instead of pushing the layout sideways. */
+.space-bar { display: flex; gap: 8px; align-items: center; margin: 2px 0 6px; flex-wrap: wrap; }
+.space-bar-label { font-weight: 600; font-size: .92rem; margin: 0; }
+.space-bar select { flex: 1; width: auto; min-width: 0; }
+.space-row {
+  display: flex; gap: 8px; align-items: center; padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.space-row:last-child { border-bottom: none; }
+.space-row.active { background: var(--bg); border-radius: 10px; padding-inline: 8px; }
+.space-row-main { flex: 1; min-width: 0; overflow-wrap: break-word; }

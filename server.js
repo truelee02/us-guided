@@ -85,9 +85,53 @@ function publicPerson(p) {
   return { ...p, astro, sun_sign: astro ? astro.sun : null, rising_sign: astro ? astro.rising : null };
 }
 function myPerson(req) {
-  return store.listPeople(req.user.household_id).find((p) => p.user_id === req.user.id) || null;
+  return req.spaceId ? store.getPersonInSpace(req.spaceId, req.user.id) : null;
 }
 const todayKey = () => new Date().toISOString().slice(0, 10);
+
+/* ---------------- spaces ----------------
+ * One account can belong to many Spaces. The client sends the active one
+ * in the X-Space-Id header; when the header is absent (or names a space
+ * the user isn't in), the user's earliest space is used, so older clients
+ * and header-less calls keep working. */
+function resolveSpace(req) {
+  const spaces = store.listSpacesForUser(req.user.id);
+  if (!spaces.length) return null;
+  const wanted = req.get('x-space-id');
+  if (wanted) {
+    const match = spaces.find((s) => s.id === wanted);
+    if (match) return match;
+  }
+  return spaces[0];
+}
+function requireSpace(req, res, next) {
+  const space = resolveSpace(req);
+  if (!space) return res.status(400).json({ error: 'No space yet — create or join one first.' });
+  req.space = space;
+  req.spaceId = space.id;
+  next();
+}
+
+/* Fields carried over when a profile is copied into another space. */
+const PROFILE_COPY_FIELDS = ['name', 'email', 'birthday', 'birth_city', 'birth_time',
+  'birth_time_unknown', 'astrology_opt_in', 'love_language', 'attachment_style',
+  'personality_snapshot', 'fight_style', 'calms_down', 'makes_worse', 'work_on',
+  'triggers', 'guide_tone', 'relationship_type', 'together_duration', 'timezone',
+  'profile_complete'];
+/* The user's profile inside a space, creating it on first entry by copying
+   their profile from another of their spaces when one exists. */
+function ensurePersonInSpace(spaceId, user) {
+  const existing = store.getPersonInSpace(spaceId, user.id);
+  if (existing) return existing;
+  const source = store.getAnyPersonForUser(user.id);
+  const fields = { space_id: spaceId, user_id: user.id, email: user.email };
+  if (source) {
+    for (const f of PROFILE_COPY_FIELDS) if (source[f] !== undefined) fields[f] = source[f];
+  } else {
+    fields.name = user.email.split('@')[0];
+  }
+  return store.createPerson(fields);
+}
 
 /* ---------------- scheduled message delivery ----------------
  * A scheduled message is stored (already cleaned — the raw draft is never
@@ -103,16 +147,18 @@ async function deliverDue() {
     for (const m of store.listDueScheduled()) {
       const delivered = store.deliverScheduled(m.id);
       if (!delivered || delivered.scheduled_for) continue;
-      const people = store.listPeople(m.household_id);
+      const people = store.listPeople(m.space_id);
       const author = people.find((p) => p.id === m.person_id);
       if (!author) continue;
-      const other = people.find((p) => p.id !== author.id) || null;
-      const recent = store.listMessages(m.household_id, 10).map((x) => ({
+      const others = people.filter((p) => p.id !== author.id);
+      const other = others[0] || null;
+      const space = store.getSpace(m.space_id);
+      const recent = store.listMessages(m.space_id, 10).map((x) => ({
         ...x, author_name: x.kind === 'guide' ? 'Guide' : (people.find((p) => p.id === x.person_id)?.name || 'Someone'),
       }));
-      const advice = await ai.guideAdvice({ author, other, postedText: delivered.body, people, recentMessages: recent });
+      const advice = await ai.guideAdvice({ author, other, others, postedText: delivered.body, people, recentMessages: recent, space });
       store.addMessage({
-        household_id: m.household_id, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
+        space_id: m.space_id, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
       });
     }
   } catch (e) {
@@ -129,26 +175,28 @@ app.post('/api/auth/signup', (req, res) => {
   if (!email || !password || !name) return res.status(400).json({ error: 'Name, email and password are required.' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
-  const household = store.createHousehold(inviteCode());
   const { salt, hash } = hashPassword(String(password));
-  const user = store.createUser({ household_id: household.id, email: String(email).toLowerCase(), password_hash: hash, salt });
-  const person = store.createPerson({ household_id: household.id, user_id: user.id, name: String(name), email: user.email });
+  const user = store.createUser({ email: String(email).toLowerCase(), password_hash: hash, salt });
+  const space = store.createSpace({ name: `${String(name)}'s space`, kind: 'couple', invite_code: inviteCode(), owner_id: user.id });
+  store.addMembership(user.id, space.id, 'owner');
+  const person = store.createPerson({ space_id: space.id, user_id: user.id, name: String(name), email: user.email });
   setSession(res, user.id);
-  res.json({ user: { id: user.id, email: user.email }, household, person: publicPerson(person) });
+  res.json({ user: { id: user.id, email: user.email }, space, person: publicPerson(person) });
 });
 
 app.post('/api/auth/join', (req, res) => {
   const { email, password, name, code } = req.body || {};
   if (!email || !password || !name || !code) return res.status(400).json({ error: 'Name, email, password and invite code are required.' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  const household = store.getHouseholdByInvite(String(code).trim().toUpperCase());
-  if (!household) return res.status(404).json({ error: 'Invite code not found.' });
+  const space = store.getSpaceByInvite(String(code).trim().toUpperCase());
+  if (!space) return res.status(404).json({ error: 'Invite code not found.' });
   if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
   const { salt, hash } = hashPassword(String(password));
-  const user = store.createUser({ household_id: household.id, email: String(email).toLowerCase(), password_hash: hash, salt });
-  const person = store.createPerson({ household_id: household.id, user_id: user.id, name: String(name), email: user.email });
+  const user = store.createUser({ email: String(email).toLowerCase(), password_hash: hash, salt });
+  store.addMembership(user.id, space.id, 'member');
+  const person = store.createPerson({ space_id: space.id, user_id: user.id, name: String(name), email: user.email });
   setSession(res, user.id);
-  res.json({ user: { id: user.id, email: user.email }, household, person: publicPerson(person) });
+  res.json({ user: { id: user.id, email: user.email }, space, person: publicPerson(person) });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -220,8 +268,9 @@ app.post('/api/auth/change-password', requireAuth, (req, res) => {
 });
 
 /* Delete my account. Requires the password, takes a safety backup first,
-   and removes the account, its profile, and everything it authored. If it
-   was the household's last account, the household goes too (see db.js). */
+   and removes the account from every Space it belongs to (see db.js for
+   the per-space semantics: empty spaces are deleted, owned spaces pass
+   to the earliest remaining member). */
 app.delete('/api/account', requireAuth, (req, res) => {
   const { password } = req.body || {};
   if (!verifyPassword(String(password || ''), req.user.salt, req.user.password_hash)) {
@@ -234,20 +283,51 @@ app.delete('/api/account', requireAuth, (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  const household = store.getHousehold(req.user.household_id);
-  res.json({ user: { id: req.user.id, email: req.user.email }, household, person: publicPerson(myPerson(req)) });
+  const spaces = store.listSpacesForUser(req.user.id);
+  const space = resolveSpace(req);
+  const person = space ? store.getPersonInSpace(space.id, req.user.id) : null;
+  res.json({ user: { id: req.user.id, email: req.user.email }, spaces, space, person: publicPerson(person) });
+});
+
+/* ---------------- spaces ---------------- */
+app.get('/api/spaces', requireAuth, (req, res) => {
+  res.json({ spaces: store.listSpacesForUser(req.user.id) });
+});
+
+app.post('/api/spaces', requireAuth, (req, res) => {
+  const { name, kind } = req.body || {};
+  const spaceKind = kind === 'family' ? 'family' : 'couple';
+  const source = store.getAnyPersonForUser(req.user.id);
+  const spaceName = String(name || '').trim() ||
+    (source ? `${source.name}'s space` : 'Our space');
+  const space = store.createSpace({ name: spaceName, kind: spaceKind, invite_code: inviteCode(), owner_id: req.user.id });
+  store.addMembership(req.user.id, space.id, 'owner');
+  const person = ensurePersonInSpace(space.id, req.user);
+  res.json({ space: { ...space, role: 'owner', member_count: 1 }, person: publicPerson(person) });
+});
+
+app.post('/api/spaces/join', requireAuth, (req, res) => {
+  const { code } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'An invite code is required.' });
+  const space = store.getSpaceByInvite(String(code).trim().toUpperCase());
+  if (!space) return res.status(404).json({ error: 'Invite code not found.' });
+  const alreadyMember = !!store.getMembership(req.user.id, space.id);
+  if (!alreadyMember) store.addMembership(req.user.id, space.id, 'member');
+  const person = ensurePersonInSpace(space.id, req.user);
+  const mine = store.listSpacesForUser(req.user.id).find((s) => s.id === space.id);
+  res.json({ space: mine || space, alreadyMember, person: publicPerson(person) });
 });
 
 /* ---------------- people / profiles ---------------- */
-app.get('/api/people', requireAuth, (req, res) => {
-  res.json({ people: store.listPeople(req.user.household_id).map(publicPerson) });
+app.get('/api/people', requireAuth, requireSpace, (req, res) => {
+  res.json({ people: store.listPeople(req.spaceId).map(publicPerson) });
 });
 
-app.post('/api/people', requireAuth, (req, res) => {
+app.post('/api/people', requireAuth, requireSpace, (req, res) => {
   const { name, email, birthday } = req.body || {};
   if (!name) return res.status(400).json({ error: 'A name is required.' });
   const person = store.createPerson({
-    household_id: req.user.household_id, name: String(name),
+    space_id: req.spaceId, name: String(name),
     email: email || null, birthday: birthday || null,
   });
   res.json({ person: publicPerson(person) });
@@ -258,9 +338,9 @@ const PROFILE_FIELDS = ['name', 'email', 'birthday', 'birth_city', 'birth_time',
   'calms_down', 'makes_worse', 'work_on', 'triggers', 'guide_tone', 'relationship_type',
   'together_duration', 'timezone'];
 
-app.put('/api/people/:id', requireAuth, (req, res) => {
+app.put('/api/people/:id', requireAuth, requireSpace, (req, res) => {
   const person = store.getPerson(req.params.id);
-  if (!person || person.household_id !== req.user.household_id) return res.status(404).json({ error: 'Person not found.' });
+  if (!person || person.space_id !== req.spaceId) return res.status(404).json({ error: 'Person not found.' });
   const updates = {};
   for (const f of PROFILE_FIELDS) {
     if (req.body && f in req.body) {
@@ -273,17 +353,17 @@ app.put('/api/people/:id', requireAuth, (req, res) => {
 });
 
 /* ---------------- talk (shared chat) ---------------- */
-app.get('/api/messages', requireAuth, async (req, res) => {
+app.get('/api/messages', requireAuth, requireSpace, async (req, res) => {
   await deliverDue(); // post anything whose time has come before showing the chat
-  const people = store.listPeople(req.user.household_id);
+  const people = store.listPeople(req.spaceId);
   const byId = Object.fromEntries(people.map((p) => [p.id, p.name]));
-  const messages = store.listMessages(req.user.household_id, 100).map((m) => ({
+  const messages = store.listMessages(req.spaceId, 100).map((m) => ({
     ...m, author_name: m.kind === 'guide' ? 'Guide' : (byId[m.person_id] || 'Someone'),
   }));
   res.json({ messages });
 });
 
-app.post('/api/messages', requireAuth, async (req, res) => {
+app.post('/api/messages', requireAuth, requireSpace, async (req, res) => {
   const { text, sendAt } = req.body || {};
   const author = myPerson(req);
   if (!author) return res.status(400).json({ error: 'Finish setting up your profile first.' });
@@ -294,11 +374,12 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'That send time doesn\'t look right.' });
   }
 
-  const people = store.listPeople(req.user.household_id);
-  const other = people.find((p) => p.id !== author.id) || null;
+  const people = store.listPeople(req.spaceId);
+  const others = people.filter((p) => p.id !== author.id);
+  const other = others[0] || null;
 
   // 1) Clean the raw draft. The raw text is NEVER stored — only the result.
-  const cleaned = await ai.cleanMessage(String(text), author, people);
+  const cleaned = await ai.cleanMessage(String(text), author, people, req.space);
   const suffix = '(reworded by AI for clearer communication)';
   const body = cleaned.changed ? `${cleaned.text} ${suffix}` : cleaned.text;
 
@@ -306,7 +387,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   // post it when its time comes (see deliverDue above).
   if (when && when.getTime() > Date.now()) {
     const scheduled = store.addMessage({
-      household_id: req.user.household_id, person_id: author.id,
+      space_id: req.spaceId, person_id: author.id,
       kind: 'message', body, reworded: cleaned.changed ? 1 : 0,
       scheduled_for: when.toISOString(),
     });
@@ -314,17 +395,17 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   }
 
   const posted = store.addMessage({
-    household_id: req.user.household_id, person_id: author.id,
+    space_id: req.spaceId, person_id: author.id,
     kind: 'message', body, reworded: cleaned.changed ? 1 : 0,
   });
 
   // 2) Guide advice reply.
-  const recent = store.listMessages(req.user.household_id, 10).map((m) => ({
+  const recent = store.listMessages(req.spaceId, 10).map((m) => ({
     ...m, author_name: m.kind === 'guide' ? 'Guide' : (people.find((p) => p.id === m.person_id)?.name || 'Someone'),
   }));
-  const advice = await ai.guideAdvice({ author, other, postedText: body, people, recentMessages: recent });
+  const advice = await ai.guideAdvice({ author, other, others, postedText: body, people, recentMessages: recent, space: req.space });
   const guideMsg = store.addMessage({
-    household_id: req.user.household_id, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
+    space_id: req.spaceId, person_id: null, kind: 'guide', body: advice.text, reworded: 0,
   });
 
   res.json({
@@ -335,18 +416,18 @@ app.post('/api/messages', requireAuth, async (req, res) => {
 });
 
 /* Scheduled messages: the author alone can see and cancel their own. */
-app.get('/api/messages/scheduled', requireAuth, (req, res) => {
+app.get('/api/messages/scheduled', requireAuth, requireSpace, (req, res) => {
   const me = myPerson(req);
   if (!me) return res.json({ scheduled: [] });
-  const scheduled = store.listScheduled(req.user.household_id, me.id)
+  const scheduled = store.listScheduled(req.spaceId, me.id)
     .map((m) => ({ ...m, author_name: me.name }));
   res.json({ scheduled });
 });
 
-app.delete('/api/messages/scheduled/:id', requireAuth, (req, res) => {
+app.delete('/api/messages/scheduled/:id', requireAuth, requireSpace, (req, res) => {
   const me = myPerson(req);
   if (!me) return res.status(404).json({ error: 'Scheduled message not found.' });
-  const mine = store.listScheduled(req.user.household_id, me.id);
+  const mine = store.listScheduled(req.spaceId, me.id);
   if (!mine.some((m) => m.id === req.params.id)) {
     return res.status(404).json({ error: 'Scheduled message not found.' });
   }
@@ -355,26 +436,26 @@ app.delete('/api/messages/scheduled/:id', requireAuth, (req, res) => {
 });
 
 /* ---------------- together: reminders & date ideas ---------------- */
-app.get('/api/reminders', requireAuth, (req, res) => {
-  res.json({ reminders: store.listReminders(req.user.household_id) });
+app.get('/api/reminders', requireAuth, requireSpace, (req, res) => {
+  res.json({ reminders: store.listReminders(req.spaceId) });
 });
-app.post('/api/reminders', requireAuth, (req, res) => {
+app.post('/api/reminders', requireAuth, requireSpace, (req, res) => {
   const { text, personId } = req.body || {};
   if (!text) return res.status(400).json({ error: 'Reminder text is required.' });
-  res.json({ reminder: store.addReminder({ household_id: req.user.household_id, person_id: personId || null, text: String(text) }) });
+  res.json({ reminder: store.addReminder({ space_id: req.spaceId, person_id: personId || null, text: String(text) }) });
 });
 app.patch('/api/reminders/:id', requireAuth, (req, res) => {
   store.setReminderDone(req.params.id, !!(req.body && req.body.done));
   res.json({ ok: true });
 });
 
-app.get('/api/date-ideas', requireAuth, (req, res) => {
-  res.json({ ideas: store.listDateIdeas(req.user.household_id) });
+app.get('/api/date-ideas', requireAuth, requireSpace, (req, res) => {
+  res.json({ ideas: store.listDateIdeas(req.spaceId) });
 });
-app.post('/api/date-ideas', requireAuth, (req, res) => {
+app.post('/api/date-ideas', requireAuth, requireSpace, (req, res) => {
   const { title, category, notes } = req.body || {};
   if (!title) return res.status(400).json({ error: 'An idea title is required.' });
-  res.json({ idea: store.addDateIdea({ household_id: req.user.household_id, title: String(title), category, notes }) });
+  res.json({ idea: store.addDateIdea({ space_id: req.spaceId, title: String(title), category, notes }) });
 });
 app.delete('/api/date-ideas/:id', requireAuth, (req, res) => {
   store.deleteDateIdea(req.params.id);
@@ -382,16 +463,16 @@ app.delete('/api/date-ideas/:id', requireAuth, (req, res) => {
 });
 
 /* ---------------- daily focuses + weekly/daily content ---------------- */
-app.get('/api/focuses', requireAuth, async (req, res) => {
-  const people = store.listPeople(req.user.household_id);
+app.get('/api/focuses', requireAuth, requireSpace, async (req, res) => {
+  const people = store.listPeople(req.spaceId);
   const dateKey = todayKey();
   const focuses = [];
   for (const person of people) {
-    let focus = store.getDailyFocus(req.user.household_id, person.id, dateKey);
+    let focus = store.getDailyFocus(req.spaceId, person.id, dateKey);
     if (!focus) {
       const partner = people.find((p) => p.id !== person.id) || null;
-      const { text } = await ai.dailyFocus(person, partner, people);
-      focus = store.saveDailyFocus(req.user.household_id, person.id, dateKey, text);
+      const { text } = await ai.dailyFocus(person, partner, people, req.space);
+      focus = store.saveDailyFocus(req.spaceId, person.id, dateKey, text);
     }
     focuses.push({ ...focus, person_name: person.name });
   }
@@ -402,8 +483,8 @@ app.patch('/api/focuses/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/weekly', requireAuth, (req, res) => {
-  const hid = req.user.household_id;
+app.get('/api/weekly', requireAuth, requireSpace, (req, res) => {
+  const hid = req.spaceId;
   const weekKey = ai.weekKeyOf();
   let ideas = store.getWeeklySet(hid, weekKey, 'date_ideas');
   if (!ideas) ideas = store.saveWeeklySet(hid, weekKey, 'date_ideas', ai.weeklyDateIdeas(weekKey));
