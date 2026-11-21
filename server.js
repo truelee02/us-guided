@@ -198,17 +198,42 @@ app.post('/api/auth/signup', (req, res) => {
   res.json({ user: { id: user.id, email: user.email }, space, person: publicPerson(person) });
 });
 
+/* Public invite preview: given a code, say which space it opens so the
+   join form can confirm "You're joining 'X'" BEFORE any account exists.
+   Only the space's name/kind and the owner's first name are exposed —
+   the same things the share message itself already tells the invitee. */
+app.get('/api/invite/:code', (req, res) => {
+  const space = store.getSpaceByInvite(String(req.params.code).trim().toUpperCase());
+  if (!space) return res.status(404).json({ error: 'Invite code not found.' });
+  const owner = store.listPeople(space.id).find((p) => p.user_id && p.user_id === space.owner_id) || null;
+  const ownerFirst = owner && owner.name ? String(owner.name).trim().split(/\s+/)[0] : null;
+  res.json({ space: { name: space.name, kind: space.kind }, owner_first_name: ownerFirst });
+});
+
+/* Join with an invite: creates the account AND lands the new user in the
+   invited space (their only space, so it's where they arrive). The code
+   is validated before anything is created — a bad code creates no
+   account — and the Terms agreement is enforced exactly as on signup. */
 app.post('/api/auth/join', (req, res) => {
-  const { email, password, name, code } = req.body || {};
+  const { email, password, name, code, birthday } = req.body || {};
   if (!email || !password || !name || !code) return res.status(400).json({ error: 'Name, email, password and invite code are required.' });
+  if (!agreedToTerms(req.body)) {
+    return res.status(400).json({ error: 'Please read and agree to the Terms of Use and Privacy Policy to create an account.' });
+  }
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   const space = store.getSpaceByInvite(String(code).trim().toUpperCase());
   if (!space) return res.status(404).json({ error: 'Invite code not found.' });
   if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
   const { salt, hash } = hashPassword(String(password));
-  const user = store.createUser({ email: String(email).toLowerCase(), password_hash: hash, salt });
+  const user = store.createUser({
+    email: String(email).toLowerCase(), password_hash: hash, salt,
+    terms_agreed_at: new Date().toISOString(), terms_version: TERMS_VERSION,
+  });
   store.addMembership(user.id, space.id, 'member');
-  const person = store.createPerson({ space_id: space.id, user_id: user.id, name: String(name), email: user.email });
+  const person = store.createPerson({
+    space_id: space.id, user_id: user.id, name: String(name), email: user.email,
+    birthday: birthday || null,
+  });
   setSession(res, user.id);
   res.json({ user: { id: user.id, email: user.email }, space, person: publicPerson(person) });
 });

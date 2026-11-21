@@ -131,7 +131,7 @@ function scoreQuiz(quiz, name) {
 
 /* ================= Auth ================= */
 function showAuth(which) {
-  document.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.authTab === which));
+  document.querySelectorAll('[data-auth-tab]').forEach((b) => b.classList.toggle('active', b.dataset.authTab === which));
   $('#login-form').hidden = which !== 'login';
   $('#signup-form').hidden = which !== 'signup';
   $('#join-form').hidden = which !== 'join';
@@ -140,7 +140,7 @@ function showAuth(which) {
   $('#forgot-row').hidden = which !== 'login';
   $('#auth-error').hidden = true;
 }
-document.querySelectorAll('.auth-tab').forEach((btn) => {
+document.querySelectorAll('[data-auth-tab]').forEach((btn) => {
   btn.addEventListener('click', () => showAuth(btn.dataset.authTab));
 });
 
@@ -187,7 +187,62 @@ async function handleAuth(formId, url) {
 }
 handleAuth('#login-form', '/api/auth/login');
 handleAuth('#signup-form', '/api/auth/signup');
-handleAuth('#join-form', '/api/auth/join');
+
+/* Join with an invite: the code is checked against the public preview
+   endpoint as it's typed, so the form can say "You're joining 'X'"
+   before anything is created. On submit the code is checked once more,
+   and after the account is created the invited space is made the active
+   one, so the new user lands inside it — never in a space of their own. */
+let pendingWelcome = null;
+async function lookupInvite(code) {
+  const res = await fetch(`/api/invite/${encodeURIComponent(code)}`);
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+function showJoinInfo(ok, text) {
+  const el = $('#join-space-info');
+  el.textContent = text;
+  el.className = ok ? 'small note' : 'small error';
+  el.hidden = false;
+}
+$('#join-code').addEventListener('input', () => { $('#join-space-info').hidden = true; });
+$('#join-code').addEventListener('blur', async () => {
+  const code = $('#join-code').value.trim().toUpperCase();
+  if (!code) { $('#join-space-info').hidden = true; return; }
+  const found = await lookupInvite(code);
+  if (!found) {
+    showJoinInfo(false, 'That code doesn\'t match any Space — check it and try again.');
+    return;
+  }
+  const who = found.owner_first_name ? ` (${found.owner_first_name}'s Space)` : '';
+  showJoinInfo(true, `You're joining '${found.space.name}'${who}.`);
+});
+$('#join-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const body = Object.fromEntries(new FormData(form));
+  const code = String(body.code || '').trim().toUpperCase();
+  const found = code ? await lookupInvite(code) : null;
+  if (!found) {
+    showJoinInfo(false, 'That code doesn\'t match any Space — check it and try again. No account was created.');
+    return;
+  }
+  try {
+    const data = await api('POST', '/api/auth/join', body);
+    if (data.space?.id) {
+      state.activeSpaceId = data.space.id;
+      localStorage.setItem('ug-active-space', data.space.id);
+      pendingWelcome = data.space;
+    }
+    await boot();
+    if (pendingWelcome) {
+      const el = $('#welcome-note');
+      el.textContent = `💜 You're in '${pendingWelcome.name}' — the Space you were invited to. This is your shared chat with your people; say hello below.`;
+      el.hidden = false;
+      pendingWelcome = null;
+    }
+  } catch (err) { authError(err.message); }
+});
 
 $('#logout-btn').addEventListener('click', async () => {
   await api('POST', '/api/auth/logout');
@@ -435,7 +490,7 @@ function inviteText() {
   const space = activeSpace();
   const code = space?.invite_code || '';
   const where = space?.name ? `my "${space.name}" space` : 'my space';
-  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Open ${location.origin}\n2. Tap "Join with invite"\n3. Use this code: ${code}\n\nThat code joins ${where}.`;
+  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Go to ${location.host}\n2. Tap "Join with an invite"\n3. Enter this code: ${code}\n\nThat code joins ${where} — you'll land right in it with me.`;
 }
 function wireInvite() {
   if (!activeSpace()?.invite_code) return;
@@ -614,23 +669,69 @@ $('#space-form').addEventListener('submit', async (e) => {
   msg.hidden = false;
 });
 
+/* Join a space while logged in: look the code up first and show a
+   preview ("You're joining 'X'") with a confirm, so a stray code never
+   silently changes anything. Already in that space? Say so and just
+   switch to it. */
+let pendingJoinCode = null;
+function showSpaceMsg(text, isError) {
+  const msg = $('#space-msg');
+  msg.textContent = text;
+  msg.className = isError ? 'small error' : 'small note';
+  msg.hidden = false;
+}
+$('#space-join-code').addEventListener('input', () => {
+  $('#space-join-preview').hidden = true;
+  pendingJoinCode = null;
+});
 $('#space-join-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const msg = $('#space-msg');
+  const code = $('#space-join-code').value.trim().toUpperCase();
+  $('#space-join-preview').hidden = true;
+  pendingJoinCode = null;
+  if (!code) { showSpaceMsg('Enter an invite code first.', true); return; }
+  // Already a member of the space this code opens? No join needed.
+  const mine = state.spaces.find((s) => s.invite_code === code);
+  if (mine) {
+    $('#space-join-code').value = '';
+    await switchSpace(mine.id);
+    showSpaceMsg(`You're already in this Space — switched you to "${mine.name}".`, false);
+    return;
+  }
+  const found = await lookupInvite(code);
+  if (!found) {
+    showSpaceMsg('That code doesn\'t match any Space — check it and try again.', true);
+    return;
+  }
+  pendingJoinCode = code;
+  $('#space-join-preview-text').textContent = `You're joining '${found.space.name}'${found.owner_first_name ? ` — ${found.owner_first_name}'s Space` : ''}.`;
+  $('#space-join-preview').hidden = false;
+  $('#space-msg').hidden = true;
+});
+$('#space-join-cancel').addEventListener('click', () => {
+  $('#space-join-preview').hidden = true;
+  pendingJoinCode = null;
+});
+$('#space-join-confirm').addEventListener('click', async () => {
+  if (!pendingJoinCode) return;
+  const code = pendingJoinCode;
+  $('#space-join-preview').hidden = true;
+  pendingJoinCode = null;
   try {
-    const { space, alreadyMember } = await api('POST', '/api/spaces/join', {
-      code: $('#space-join-code').value,
-    });
+    const { space, alreadyMember } = await api('POST', '/api/spaces/join', { code });
     $('#space-join-code').value = '';
     await refreshSpaces();
     await switchSpace(space.id);
-    msg.textContent = alreadyMember ? `You're already in "${space.name}".` : `Joined "${space.name}" — say hello in the Talk tab.`;
-    msg.className = 'small note';
+    showSpaceMsg(alreadyMember
+      ? `You're already in this Space — switched you to "${space.name}".`
+      : `Joined "${space.name}" — you're in! Say hello in the Talk tab.`, false);
   } catch (err) {
-    msg.textContent = err.message;
-    msg.className = 'small error';
+    showSpaceMsg(err.message, true);
   }
-  msg.hidden = false;
+});
+$('#join-space-btn').addEventListener('click', () => {
+  document.querySelector('.tab[data-tab="us"]').click();
+  $('#space-join-code').focus();
 });
 $('#share-invite').addEventListener('click', async () => {
   if (navigator.share) {

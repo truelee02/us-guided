@@ -17,10 +17,19 @@
   <h1>💜 Us, Guided</h1>
   <p class="muted">One shared chat with an AI Guide who knows you both — and helps you say the hard things kindly.</p>
 
-  <div class="auth-tabs">
-    <button data-auth-tab="login" class="auth-tab active">Log in</button>
-    <button data-auth-tab="signup" class="auth-tab">Sign up</button>
-    <button data-auth-tab="join" class="auth-tab">Join with invite</button>
+  <div class="auth-choices">
+    <button type="button" data-auth-tab="login" class="auth-choice active">
+      <span class="auth-choice-title">Log in</span>
+      <span class="auth-choice-desc">Already have an account? Pick up right where you left off.</span>
+    </button>
+    <button type="button" data-auth-tab="join" class="auth-choice">
+      <span class="auth-choice-title">Join with an invite</span>
+      <span class="auth-choice-desc">Were you invited? If your partner or family sent you a code, start here. You'll create your account and land in their Space with them.</span>
+    </button>
+    <button type="button" data-auth-tab="signup" class="auth-choice">
+      <span class="auth-choice-title">Sign up</span>
+      <span class="auth-choice-desc">New here and starting your own Space? Create your account first, then invite your people to join you.</span>
+    </button>
   </div>
 
   <form id="login-form" class="auth-form">
@@ -49,11 +58,24 @@
   </form>
 
   <form id="join-form" class="auth-form" hidden>
+    <label>Invite code <input type="text" name="code" id="join-code" required placeholder="e.g. 9F3AC21B" style="text-transform:uppercase" autocomplete="off"></label>
+    <p id="join-space-info" class="small" hidden></p>
     <label>Your name <input type="text" name="name" required autocomplete="name"></label>
     <label>Email <input type="email" name="email" required autocomplete="email"></label>
     <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
-    <label>Invite code <input type="text" name="code" required placeholder="e.g. 9F3AC21B" style="text-transform:uppercase"></label>
-    <button type="submit" class="primary">Join space</button>
+    <label>Birthday <input type="date" name="birthday"></label>
+    <div class="agree-box">
+      <h4>Before you join</h4>
+      <ul class="small">
+        <li>Us, Guided is <strong>not therapy</strong> and does not replace professional help.</li>
+        <li>When you send a message, the Guide (an AI) may <strong>reword it for clearer communication</strong> before it posts.</li>
+        <li>The AI can make mistakes. You are responsible for your own decisions.</li>
+        <li>If you are in an abusive or unsafe relationship, this app is not the help you need. Call the <strong>National Domestic Violence Hotline at 1-800-799-7233</strong> or text <strong>START</strong> to <strong>88788</strong>. In a crisis, call or text <strong>988</strong>. In an emergency, call <strong>911</strong>.</li>
+      </ul>
+    </div>
+    <label class="check"><input type="checkbox" name="agree" required> <span>I have read and agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a></span></label>
+    <button type="submit" class="primary">Create my account &amp; join</button>
+    <p class="muted small">This creates your account and puts you straight into the Space the code belongs to — with the person who invited you.</p>
   </form>
 
   <form id="forgot-form" class="auth-form" hidden>
@@ -88,6 +110,7 @@
     <label class="space-bar-label" for="space-switcher">Space</label>
     <select id="space-switcher" aria-label="Choose a space"></select>
     <button type="button" id="new-space-btn" class="ghost">＋ New space</button>
+    <button type="button" id="join-space-btn" class="ghost">Join a space</button>
   </div>
 
   <nav class="tabs">
@@ -98,6 +121,7 @@
 
   <!-- ===== TALK ===== -->
   <section id="tab-talk" class="tab-panel">
+    <p id="welcome-note" class="note" hidden></p>
     <div id="focus-cards"></div>
     <div id="messages" class="messages"></div>
     <div id="scheduled-strip" hidden>
@@ -189,17 +213,26 @@
         <button type="submit" class="primary">Create space</button>
       </form>
       <hr class="sep">
+      <h4>Join a space</h4>
+      <p class="muted small">Got a code from your partner or family? Enter it here to join their Space.</p>
       <form id="space-join-form" class="inline-form">
-        <input type="text" id="space-join-code" placeholder="Invite code" style="text-transform:uppercase" required>
+        <input type="text" id="space-join-code" placeholder="Invite code" style="text-transform:uppercase" autocomplete="off" required>
         <button type="submit" class="ghost">Join a space</button>
       </form>
+      <div id="space-join-preview" hidden>
+        <p id="space-join-preview-text" class="small note"></p>
+        <div class="modal-actions">
+          <button type="button" id="space-join-cancel" class="ghost">Cancel</button>
+          <button type="button" id="space-join-confirm" class="primary">Join this Space</button>
+        </div>
+      </div>
       <p id="space-msg" class="small" hidden></p>
     </div>
 
     <div class="card">
       <h3>🔗 Invite to <span id="active-space-name">this space</span></h3>
       <p>Invite code: <strong id="invite-code">—</strong></p>
-      <p class="muted small">Share this code so someone can join this space — from the sign-up screen, or with "Join a space" above if they already have an account.</p>
+      <p class="muted small">Share this code so someone can join this space. New to Us, Guided? They'll tap "Join with an invite" on the home screen. Already have an account? They can use "Join a space" above.</p>
       <div class="invite-actions">
         <button type="button" id="share-invite" class="primary">📤 Share invite</button>
       </div>
