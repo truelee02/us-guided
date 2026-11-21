@@ -34,6 +34,9 @@ label { display: block; margin: 8px 0; font-size: .92rem; }
 label.check, label.radio { display: flex; gap: 8px; align-items: flex-start; font-weight: normal; }
 label.check input, label.radio input { width: auto; margin-top: 3px; }
 fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 14px 0; padding: 10px 14px; }
+.type-picker legend { font-weight: 600; padding: 0 4px; }
+.type-picker .type-option { padding: 6px 0; cursor: pointer; }
+.type-picker .type-option + .type-option { border-top: 1px dashed var(--line); }
 legend { font-weight: 600; padding: 0 6px; }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }

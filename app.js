@@ -26,6 +26,20 @@ let state = {
 };
 const activeSpace = () => state.spaces.find((s) => s.id === state.activeSpaceId) || state.spaces[0] || null;
 
+/* Space relationship types — mirrors types.js on the server. The type
+   drives the Guide's tone, focuses and Together ideas for the space. */
+const SPACE_TYPES = {
+  partner: { name: 'Romantic partner', icon: '💑' },
+  coparent: { name: 'Co-parents', icon: '🧒' },
+  parent_child: { name: 'Parent & child', icon: '👨‍👧' },
+  family: { name: 'Family', icon: '👨‍👩‍👧' },
+  friends: { name: 'Friends', icon: '🎉' },
+  roommates: { name: 'Roommates', icon: '🏠' },
+  caregivers: { name: 'Caregivers', icon: '💛' },
+};
+const typeOf = (space) => SPACE_TYPES[space?.kind] || SPACE_TYPES.partner; // legacy 'couple' reads as partner
+const typeName = (space) => typeOf(space).name;
+
 /* The no-space state (reachable by deleting your only space): clear the
    per-space panels and point at the Us tab, where spaces are made/joined. */
 function showNoSpace() {
@@ -217,7 +231,8 @@ $('#signup-code').addEventListener('blur', async () => {
     return;
   }
   const who = found.owner_first_name ? ` (${found.owner_first_name}'s Space)` : '';
-  showSignupInfo(true, `You're joining '${found.space.name}'${who}.`);
+  const what = found.space.kind_name ? ` — a ${found.space.kind_name} Space` : '';
+  showSignupInfo(true, `You're joining '${found.space.name}'${what}${who}.`);
 });
 $('#signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -411,9 +426,16 @@ async function loadTogether() {
   const [rem, ideas, weekly] = await Promise.all([
     api('GET', '/api/reminders'), api('GET', '/api/date-ideas'), api('GET', '/api/weekly'),
   ]);
-  const isFamily = activeSpace()?.kind === 'family';
-  $('#weekly-ideas-title').textContent = isFamily ? '🤲 Things to do together this week' : '🎲 This week\'s date ideas';
-  $('#saved-ideas-title').textContent = isFamily ? '💡 Saved ideas' : '💡 Saved date ideas';
+  const together = weekly.together || {};
+  $('#weekly-ideas-title').textContent = together.heading || '🎲 This week\'s ideas';
+  $('#saved-ideas-title').textContent = together.savedHeading || '💡 Saved ideas';
+  $('#daily-activity-title').textContent = together.dailyHeading || '🌱 Today\'s connection activity';
+  if (Array.isArray(together.categories) && together.categories.length) {
+    const current = $('#idea-category').value;
+    $('#idea-category').innerHTML = together.categories.map((c) =>
+      `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    if (together.categories.includes(current)) $('#idea-category').value = current;
+  }
   $('#daily-activity').textContent = weekly.dailyActivity?.text || '—';
   const wa = weekly.weeklyActivity || {};
   $('#weekly-activity').innerHTML = `<strong>${esc(wa.title || '')}</strong> <span class="badge">${esc(wa.type || '')}</span><br>${esc(wa.body || '')}`;
@@ -516,7 +538,7 @@ function wireInvite() {
 function renderSwitcher() {
   const sel = $('#space-switcher');
   sel.innerHTML = state.spaces.map((s) =>
-    `<option value="${s.id}" ${s.id === state.activeSpaceId ? 'selected' : ''}>${esc(s.name)} ${s.kind === 'family' ? '👨‍👩‍👧' : '💑'}</option>`).join('');
+    `<option value="${s.id}" ${s.id === state.activeSpaceId ? 'selected' : ''}>${esc(s.name)} ${typeOf(s).icon}</option>`).join('');
 }
 
 function renderSpaces() {
@@ -526,7 +548,7 @@ function renderSpaces() {
       <div class="space-row ${s.id === state.activeSpaceId ? 'active' : ''}">
         <span class="space-row-main">
           <strong>${esc(s.name)}</strong>
-          <span class="badge">${s.kind === 'family' ? 'Family' : 'Couple'}</span>
+          <span class="badge">${typeOf(s).icon} ${esc(typeName(s))}</span>
           ${s.role === 'owner' ? '<span class="badge">owner</span>' : ''}
           <br><span class="muted small">${s.member_count} member${s.member_count === 1 ? '' : 's'} · invite code <strong>${esc(s.invite_code)}</strong></span>
         </span>
@@ -535,10 +557,21 @@ function renderSpaces() {
           : `<button type="button" class="ghost small-btn" data-switch-space="${s.id}">Switch</button>`}
         ${s.role === 'owner' ? `<span class="space-row-actions">
           <button type="button" class="ghost small-btn" data-rename-space="${s.id}">Rename</button>
+          <button type="button" class="ghost small-btn" data-type-space="${s.id}">Kind</button>
           <button type="button" class="ghost small-btn" data-delete-space="${s.id}">Delete</button>
         </span>` : ''}
       </div>
       ${s.role === 'owner' ? `
+      <div class="space-edit" data-type-panel="${s.id}" hidden>
+        <label class="small">What kind of Space is this?
+          <select data-type-input="${s.id}" aria-label="Kind of this space">
+            ${Object.entries(SPACE_TYPES).map(([key, t]) => `<option value="${key}" ${key === s.kind ? 'selected' : ''}>${t.icon} ${esc(t.name)}</option>`).join('')}
+          </select>
+        </label>
+        <button type="button" class="primary small-btn" data-type-save="${s.id}">Save kind</button>
+        <button type="button" class="ghost small-btn" data-type-cancel="${s.id}">Cancel</button>
+        <p class="muted small">The kind shapes the Guide's focuses, ideas and activities for this space.</p>
+      </div>
       <div class="space-edit" data-rename-panel="${s.id}" hidden>
         <input type="text" maxlength="60" value="${esc(s.name)}" data-rename-input="${s.id}" aria-label="New name for this space">
         <button type="button" class="primary small-btn" data-rename-save="${s.id}">Save name</button>
@@ -567,6 +600,19 @@ function renderSpaces() {
   });
   document.querySelectorAll('[data-rename-save]').forEach((b) => {
     b.addEventListener('click', () => renameSpace(b.dataset.renameSave));
+  });
+  document.querySelectorAll('[data-type-space]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelector(`[data-type-panel="${b.dataset.typeSpace}"]`).hidden = false;
+    });
+  });
+  document.querySelectorAll('[data-type-cancel]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelector(`[data-type-panel="${b.dataset.typeCancel}"]`).hidden = true;
+    });
+  });
+  document.querySelectorAll('[data-type-save]').forEach((b) => {
+    b.addEventListener('click', () => changeSpaceType(b.dataset.typeSave));
   });
   document.querySelectorAll('[data-delete-space]').forEach((b) => {
     b.addEventListener('click', () => {
@@ -598,6 +644,29 @@ async function renameSpace(spaceId) {
     await refreshSpaces();
     await loadPeople(); // keeps the invite card's space name current
     msg.textContent = `Renamed to "${name}".`;
+    msg.className = 'small note';
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+  }
+  msg.hidden = false;
+}
+
+async function changeSpaceType(spaceId) {
+  const select = document.querySelector(`[data-type-input="${spaceId}"]`);
+  const kind = select?.value;
+  const msg = $('#space-msg');
+  if (!kind || !SPACE_TYPES[kind]) {
+    msg.textContent = 'Pick a kind first.';
+    msg.className = 'small error';
+    msg.hidden = false;
+    return;
+  }
+  try {
+    const { space } = await api('PATCH', `/api/spaces/${spaceId}`, { kind });
+    await refreshSpaces();
+    if (!$('#tab-together').hidden) loadTogether(); // headings + ideas follow the new kind
+    msg.textContent = `"${space.name}" is now a ${typeName(space)} Space — the Guide's focuses and ideas will match.`;
     msg.className = 'small note';
   } catch (err) {
     msg.textContent = err.message;
@@ -665,7 +734,8 @@ $('#space-form').addEventListener('submit', async (e) => {
   const msg = $('#space-msg');
   try {
     const { space } = await api('POST', '/api/spaces', {
-      name: $('#space-name').value, kind: $('#space-kind').value,
+      name: $('#space-name').value,
+      kind: document.querySelector('input[name="space-kind"]:checked')?.value || 'partner',
     });
     $('#space-name').value = '';
     await refreshSpaces();
@@ -714,7 +784,7 @@ $('#space-join-form').addEventListener('submit', async (e) => {
     return;
   }
   pendingJoinCode = code;
-  $('#space-join-preview-text').textContent = `You're joining '${found.space.name}'${found.owner_first_name ? ` — ${found.owner_first_name}'s Space` : ''}.`;
+  $('#space-join-preview-text').textContent = `You're joining '${found.space.name}'${found.space.kind_name ? ` — a ${found.space.kind_name} Space` : ''}${found.owner_first_name ? ` (${found.owner_first_name}'s)` : ''}.`;
   $('#space-join-preview').hidden = false;
   $('#space-msg').hidden = true;
 });

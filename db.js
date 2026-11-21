@@ -6,7 +6,12 @@
  * the methods exported at the bottom of this file.
  *
  * Spaces model (Nov 17): a user account can belong to many Spaces via
- * memberships. Each Space (kind 'couple' | 'family') has its own people
+ * memberships. Each Space has a relationship type in spaces.kind — one of
+ * 'partner' | 'coparent' | 'parent_child' | 'family' | 'friends' |
+ * 'roommates' | 'caregivers' (see types.js). Spaces created before types
+ * existed stored 'couple' (the old two-type system, with 'family'); at
+ * load, 'couple' spaces are migrated to 'partner' (idempotent, after a
+ * snapshot). Each Space has its own people
  * (profiles keyed by space + user), messages, reminders, date ideas,
  * weekly sets, daily focuses and daily activities — all keyed by space_id.
  * Older data keyed by household_id is migrated at startup: each household
@@ -34,8 +39,8 @@ function spaceNameFor(names) {
   return 'Our space';
 }
 
-function preMigrationSnapshot() {
-  try { require('./backups').snapshot('pre-spaces-migration'); } catch (_) { /* never block migration */ }
+function preMigrationSnapshot(reason) {
+  try { require('./backups').snapshot(reason || 'pre-spaces-migration'); } catch (_) { /* never block migration */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -52,7 +57,7 @@ function trySqlite() {
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS spaces (
-      id TEXT PRIMARY KEY, name TEXT, kind TEXT NOT NULL DEFAULT 'couple',
+      id TEXT PRIMARY KEY, name TEXT, kind TEXT NOT NULL DEFAULT 'partner',
       invite_code TEXT UNIQUE NOT NULL, owner_id TEXT, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS memberships (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, space_id TEXT NOT NULL,
@@ -130,7 +135,7 @@ function trySqlite() {
             return p ? p.name : null;
           });
           run('INSERT INTO spaces (id, name, kind, invite_code, owner_id, created_at) VALUES (?,?,?,?,?,?)',
-            h.id, spaceNameFor(names), 'couple', h.invite_code, members.length ? members[0].id : null, h.created_at);
+            h.id, spaceNameFor(names), 'partner', h.invite_code, members.length ? members[0].id : null, h.created_at);
           members.forEach((u, i) => {
             run('INSERT OR IGNORE INTO memberships (id, user_id, space_id, role, created_at) VALUES (?,?,?,?,?)',
               id(), u.id, h.id, i === 0 ? 'owner' : 'member', u.created_at);
@@ -144,6 +149,17 @@ function trySqlite() {
     }
   } catch (e) {
     console.error('[db] spaces migration (sqlite) failed:', e.message);
+  }
+
+  /* ---- Type migration: legacy kind 'couple' -> 'partner' (idempotent) ---- */
+  try {
+    const legacy = row("SELECT COUNT(*) AS n FROM spaces WHERE kind = 'couple'");
+    if (legacy && legacy.n > 0) {
+      preMigrationSnapshot('pre-type-migration');
+      run("UPDATE spaces SET kind = 'partner' WHERE kind = 'couple'");
+    }
+  } catch (e) {
+    console.error('[db] type migration (sqlite) failed:', e.message);
   }
 
   const deleteSpaceData = (sid) => {
@@ -161,7 +177,7 @@ function trySqlite() {
   return {
     mode: 'sqlite',
     createSpace(s) {
-      const space = { id: id(), kind: 'couple', owner_id: null, created_at: now(), ...s };
+      const space = { id: id(), kind: 'partner', owner_id: null, created_at: now(), ...s };
       run('INSERT INTO spaces (id, name, kind, invite_code, owner_id, created_at) VALUES (?,?,?,?,?,?)',
         space.id, space.name || null, space.kind, space.invite_code, space.owner_id, space.created_at);
       return row('SELECT * FROM spaces WHERE id = ?', space.id);
@@ -171,6 +187,10 @@ function trySqlite() {
     setSpaceOwner(sid, uid) { run('UPDATE spaces SET owner_id = ? WHERE id = ?', uid, sid); },
     updateSpaceName(sid, name) {
       run('UPDATE spaces SET name = ? WHERE id = ?', name, sid);
+      return row('SELECT * FROM spaces WHERE id = ?', sid);
+    },
+    updateSpaceKind(sid, kind) {
+      run('UPDATE spaces SET kind = ? WHERE id = ?', kind, sid);
       return row('SELECT * FROM spaces WHERE id = ?', sid);
     },
     addMembership(uid, sid, role) {
@@ -399,6 +419,15 @@ function jsonStore() {
     delete data.households;
     save();
   }
+  /* ---- Type migration: legacy kind 'couple' -> 'partner' (idempotent).
+     Runs whenever a 'couple' space is still on disk — including files the
+     households migration above just produced. A snapshot is taken first,
+     following the same pattern as the spaces migration. ---- */
+  if (Array.isArray(data.spaces) && data.spaces.some((s) => s.kind === 'couple')) {
+    preMigrationSnapshot('pre-type-migration');
+    for (const s of data.spaces) if (s.kind === 'couple') s.kind = 'partner';
+    save();
+  }
   if (!Array.isArray(data.spaces)) data.spaces = [];
   if (!Array.isArray(data.memberships)) data.memberships = [];
 
@@ -417,7 +446,7 @@ function jsonStore() {
   return {
     mode: 'json',
     createSpace(s) {
-      const space = { id: id(), kind: 'couple', owner_id: null, created_at: now(), ...s };
+      const space = { id: id(), kind: 'partner', owner_id: null, created_at: now(), ...s };
       data.spaces.push(space); save(); return space;
     },
     getSpace: (sid) => find('spaces', (s) => s.id === sid),
@@ -429,6 +458,11 @@ function jsonStore() {
     updateSpaceName(sid, name) {
       const s = find('spaces', (x) => x.id === sid);
       if (s) { s.name = name; save(); }
+      return s;
+    },
+    updateSpaceKind(sid, kind) {
+      const s = find('spaces', (x) => x.id === sid);
+      if (s) { s.kind = kind; save(); }
       return s;
     },
     addMembership(uid, sid, role) {

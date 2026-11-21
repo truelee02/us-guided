@@ -134,7 +134,7 @@
   <!-- ===== TOGETHER ===== -->
   <section id="tab-together" class="tab-panel" hidden>
     <div class="card">
-      <h3>🌱 Today's connection activity</h3>
+      <h3 id="daily-activity-title">🌱 Today's connection activity</h3>
       <p id="daily-activity">…</p>
     </div>
 
@@ -182,12 +182,17 @@
       <div id="spaces-list"></div>
       <form id="space-form" class="stack-form">
         <label>New space name <input type="text" id="space-name" placeholder="e.g. Me &amp; the girls" required></label>
-        <label>Kind
-          <select id="space-kind">
-            <option value="couple">Couple — two-person space</option>
-            <option value="family">Family — group space</option>
-          </select>
-        </label>
+        <fieldset class="type-picker">
+          <legend>What kind of Space is this?</legend>
+          <p class="muted small">The kind shapes what the Guide suggests — focuses, ideas and activities are written for this kind of relationship.</p>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="partner" checked> <span><strong>💑 Romantic partner</strong><br><span class="muted small">For couples — warmth, closeness, and working through things together.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="coparent"> <span><strong>🧒 Co-parents</strong><br><span class="muted small">Raising kids together from two homes — clear, calm coordination.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="parent_child"> <span><strong>👨‍👧 Parent &amp; child</strong><br><span class="muted small">A parent and their child — staying close across the years.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="family"> <span><strong>👨‍👩‍👧 Family</strong><br><span class="muted small">The whole family in one space — connection and coordination.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="friends"> <span><strong>🎉 Friends</strong><br><span class="muted small">Friends who want to stay close and talk honestly.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="roommates"> <span><strong>🏠 Roommates</strong><br><span class="muted small">Sharing a home — chores, bills, guests, and keeping the peace.</span></span></label>
+          <label class="radio type-option"><input type="radio" name="space-kind" value="caregivers"> <span><strong>💛 Caregivers</strong><br><span class="muted small">Family coordinating care for a loved one — no one carries it alone.</span></span></label>
+        </fieldset>
         <button type="submit" class="primary">Create space</button>
       </form>
       <hr class="sep">
@@ -317,8 +322,13 @@
         <label>We are a
           <select name="relationship_type">
             <option value="">—</option>
-            <option value="couple">Couple</option>
+            <option value="partner">Romantic partner</option>
+            <option value="coparent">Co-parents</option>
+            <option value="parent_child">Parent &amp; child</option>
             <option value="family">Family</option>
+            <option value="friends">Friends</option>
+            <option value="roommates">Roommates</option>
+            <option value="caregivers">Caregivers</option>
           </select></label>
         <label>How long together <input type="text" name="together_duration" placeholder="e.g. 6 years"></label>
         <label>Timezone <input type="text" name="timezone" placeholder="e.g. America/Chicago"></label>

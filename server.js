@@ -23,6 +23,7 @@ const ai = require('./ai');
 const backups = require('./backups');
 const mailer = require('./mailer');
 const { astroSummary } = require('./astro');
+const { isValidKind, normalizeKind, kindName, typeMeta } = require('./types');
 
 const TERMS_VERSION = '2026-11-19';
 /* The signup form's agreement checkbox arrives as 'on' (form data) or a
@@ -191,7 +192,7 @@ app.post('/api/auth/signup', (req, res) => {
     email: String(email).toLowerCase(), password_hash: hash, salt,
     terms_agreed_at: new Date().toISOString(), terms_version: TERMS_VERSION,
   });
-  const space = store.createSpace({ name: `${String(name)}'s space`, kind: 'couple', invite_code: inviteCode(), owner_id: user.id });
+  const space = store.createSpace({ name: `${String(name)}'s space`, kind: 'partner', invite_code: inviteCode(), owner_id: user.id });
   store.addMembership(user.id, space.id, 'owner');
   const person = store.createPerson({
     space_id: space.id, user_id: user.id, name: String(name), email: user.email,
@@ -210,7 +211,8 @@ app.get('/api/invite/:code', (req, res) => {
   if (!space) return res.status(404).json({ error: 'Invite code not found.' });
   const owner = store.listPeople(space.id).find((p) => p.user_id && p.user_id === space.owner_id) || null;
   const ownerFirst = owner && owner.name ? String(owner.name).trim().split(/\s+/)[0] : null;
-  res.json({ space: { name: space.name, kind: space.kind }, owner_first_name: ownerFirst });
+  const kind = normalizeKind(space.kind);
+  res.json({ space: { name: space.name, kind, kind_name: kindName(kind) }, owner_first_name: ownerFirst });
 });
 
 /* Join with an invite: creates the account AND lands the new user in the
@@ -338,7 +340,10 @@ app.get('/api/spaces', requireAuth, (req, res) => {
 
 app.post('/api/spaces', requireAuth, (req, res) => {
   const { name, kind } = req.body || {};
-  const spaceKind = kind === 'family' ? 'family' : 'couple';
+  if (kind !== undefined && kind !== null && kind !== '' && !isValidKind(kind)) {
+    return res.status(400).json({ error: 'That kind of space isn\'t one of the options.' });
+  }
+  const spaceKind = isValidKind(kind) ? kind : 'partner';
   const source = store.getAnyPersonForUser(req.user.id);
   const spaceName = String(name || '').trim() ||
     (source ? `${source.name}'s space` : 'Our space');
@@ -360,21 +365,31 @@ app.post('/api/spaces/join', requireAuth, (req, res) => {
   res.json({ space: mine || space, alreadyMember, person: publicPerson(person) });
 });
 
-/* Rename a space — owner only. Non-members get a 404 so the space's
-   existence isn't leaked; members who aren't the owner get a 403. */
+/* Rename a space and/or change its relationship type — owner only.
+   Non-members get a 404 so the space's existence isn't leaked; members
+   who aren't the owner get a 403 (same pattern for both fields). */
 app.patch('/api/spaces/:id', requireAuth, (req, res) => {
   const space = store.getSpace(req.params.id);
   if (!space || !store.getMembership(req.user.id, space.id)) {
     return res.status(404).json({ error: 'Space not found.' });
   }
   if (space.owner_id !== req.user.id) {
-    return res.status(403).json({ error: 'Only the space owner can rename it.' });
+    return res.status(403).json({ error: 'Only the space owner can change it.' });
   }
-  const name = String((req.body || {}).name || '').trim();
-  if (!name || name.length > 60) {
-    return res.status(400).json({ error: 'Give the space a name (1 to 60 characters).' });
+  const body = req.body || {};
+  if (body.kind !== undefined) {
+    if (!isValidKind(body.kind)) {
+      return res.status(400).json({ error: 'That kind of space isn\'t one of the options.' });
+    }
+    store.updateSpaceKind(space.id, body.kind);
   }
-  store.updateSpaceName(space.id, name);
+  if (body.name !== undefined) {
+    const name = String(body.name || '').trim();
+    if (!name || name.length > 60) {
+      return res.status(400).json({ error: 'Give the space a name (1 to 60 characters).' });
+    }
+    store.updateSpaceName(space.id, name);
+  }
   const mine = store.listSpacesForUser(req.user.id).find((s) => s.id === space.id);
   res.json({ space: mine || store.getSpace(space.id) });
 });
@@ -579,15 +594,29 @@ app.patch('/api/focuses/:id', requireAuth, (req, res) => {
 
 app.get('/api/weekly', requireAuth, requireSpace, (req, res) => {
   const hid = req.spaceId;
+  const kind = normalizeKind(req.space.kind);
   const weekKey = ai.weekKeyOf();
-  let ideas = store.getWeeklySet(hid, weekKey, 'date_ideas');
-  if (!ideas) ideas = store.saveWeeklySet(hid, weekKey, 'date_ideas', ai.weeklyDateIdeas(weekKey));
-  let activity = store.getWeeklySet(hid, weekKey, 'activity');
-  if (!activity) activity = store.saveWeeklySet(hid, weekKey, 'activity', ai.weeklyActivity(weekKey));
+  /* Weekly sets are keyed per type, so changing a space's type (or a
+     legacy set saved under the old shared key) never serves another
+     type's ideas. */
+  const ideasKey = `ideas_${kind}`;
+  let ideas = store.getWeeklySet(hid, weekKey, ideasKey);
+  if (!ideas) ideas = store.saveWeeklySet(hid, weekKey, ideasKey, ai.weeklyIdeas(req.space, weekKey));
+  const activityKey = `activity_${kind}`;
+  let activity = store.getWeeklySet(hid, weekKey, activityKey);
+  if (!activity) activity = store.saveWeeklySet(hid, weekKey, activityKey, ai.weeklyActivity(weekKey, req.space));
   const dateKey = todayKey();
   let daily = store.getDailyActivity(hid, dateKey);
-  if (!daily) daily = store.saveDailyActivity(hid, dateKey, ai.dailyActivity(dateKey));
-  res.json({ weekKey, weeklyDateIdeas: ideas.payload, weeklyActivity: activity.payload, dailyActivity: daily });
+  if (!daily) daily = store.saveDailyActivity(hid, dateKey, ai.dailyActivity(dateKey, req.space));
+  const together = typeMeta(kind).together;
+  res.json({
+    weekKey, kind, kind_name: kindName(kind),
+    weeklyDateIdeas: ideas.payload, weeklyActivity: activity.payload, dailyActivity: daily,
+    together: {
+      heading: together.heading, savedHeading: together.savedHeading,
+      dailyHeading: together.dailyHeading, categories: together.categories,
+    },
+  });
 });
 
 /* ---------------- health & static ---------------- */
@@ -634,7 +663,7 @@ app.post('/api/admin/reset-password', (req, res) => {
 /* Web assets (index.html, app.js, styles.css, ...) live in this same folder.
    Never serve the server-side code, dependencies, or the data directory. */
 const BLOCKED_PATHS = new Set(['/server.js', '/db.js', '/ai.js', '/astro.js',
-  '/backups.js', '/mailer.js',
+  '/backups.js', '/mailer.js', '/types.js',
   '/package.json', '/package-lock.json', '/render.yaml', '/README.md',
   '/.env.example', '/.gitignore']);
 app.use((req, res, next) => {
