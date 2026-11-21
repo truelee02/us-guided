@@ -4,7 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Us, Guided</title>
-<meta name="theme-color" content="#7c5cbf">
+<meta name="theme-color" content="#f2e7cf">
+<script>
+  /* Apply the saved theme (Parchment default / Candlelight) before first
+     paint, so there's no flash of the wrong look. */
+  try {
+    document.documentElement.dataset.theme =
+      localStorage.getItem('ug-theme') === 'candlelight' ? 'candlelight' : 'parchment';
+  } catch (e) { document.documentElement.dataset.theme = 'parchment'; }
+</script>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -14,7 +22,7 @@
 
 <!-- ============ AUTH VIEW ============ -->
 <main id="auth-view" class="card auth-card" hidden>
-  <h1>💜 Us, Guided</h1>
+  <h1><span class="brand-mark"><svg class="brand-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M43 28a7 7 0 0 1 14 0"/><path d="M40 31h20l3.5 7h-27z"/><path d="M39.5 38v28M60.5 38v28"/><path d="M35 66h30"/><path d="M42 73h16"/></g><path d="M50 46c2.8 3.8 4.2 6.2 4.2 8.6a4.2 4.2 0 1 1-8.4 0c0-2.4 1.4-4.8 4.2-8.6z" fill="currentColor"/></svg></span> Us, Guided</h1>
   <p class="muted">One shared chat with an AI Guide who knows you both — and helps you say the hard things kindly.</p>
 
   <div class="auth-choices">
@@ -79,7 +87,7 @@
 <!-- ============ APP VIEW ============ -->
 <div id="app-view" hidden>
   <header class="topbar">
-    <span class="logo">💜 Us, Guided</span>
+    <span class="logo"><span class="brand-mark"><svg class="brand-svg" viewBox="0 0 100 100" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M43 28a7 7 0 0 1 14 0"/><path d="M40 31h20l3.5 7h-27z"/><path d="M39.5 38v28M60.5 38v28"/><path d="M35 66h30"/><path d="M42 73h16"/></g><path d="M50 46c2.8 3.8 4.2 6.2 4.2 8.6a4.2 4.2 0 1 1-8.4 0c0-2.4 1.4-4.8 4.2-8.6z" fill="currentColor"/></svg></span> Us, Guided</span>
     <span id="stub-badge" class="badge" hidden>STUB AI</span>
     <button id="logout-btn" class="ghost">Log out</button>
   </header>
@@ -237,6 +245,13 @@
         <label>Birthday <input type="date" name="birthday"></label>
         <button type="submit" class="primary">Add person</button>
       </form>
+    </div>
+
+    <div class="card">
+      <h3>🕯️ Appearance</h3>
+      <p class="muted small">Choose how Us, Guided looks on this device. Your pick is saved here — it doesn't change what anyone else sees.</p>
+      <label class="radio"><input type="radio" name="ug-theme-choice" value="parchment"> <span><strong>Parchment</strong> — a warm journal page, easy on the eyes</span></label>
+      <label class="radio"><input type="radio" name="ug-theme-choice" value="candlelight"> <span><strong>Candlelight</strong> — deep browns by lantern light</span></label>
     </div>
 
     <div class="card">

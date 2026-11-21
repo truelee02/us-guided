@@ -927,6 +927,21 @@ $('#delete-form').addEventListener('submit', async (e) => {
   }
 });
 
+/* ================= Appearance (Parchment / Candlelight) =================
+   The inline script in index.html already set data-theme on <html> before
+   first paint; here we just keep the Us-tab toggle in sync and persist
+   changes to localStorage ('ug-theme'). Per-device only. */
+function applyTheme(name) {
+  const t = name === 'candlelight' ? 'candlelight' : 'parchment';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('ug-theme', t); } catch (_) { /* private mode */ }
+  document.querySelectorAll('input[name="ug-theme-choice"]').forEach((r) => { r.checked = r.value === t; });
+}
+document.querySelectorAll('input[name="ug-theme-choice"]').forEach((r) => {
+  r.addEventListener('change', () => applyTheme(r.value));
+});
+applyTheme(document.documentElement.dataset.theme);
+
 /* ================= Boot ================= */
 async function boot() {
   try {

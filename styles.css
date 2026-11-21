@@ -1,34 +1,92 @@
-:root {
-  --purple: #7c5cbf;
-  --purple-dark: #5f43a0;
-  --bg: #faf7ff;
-  --card: #ffffff;
-  --ink: #2b2438;
-  --muted: #8a819c;
-  --line: #e6def5;
-  --guide: #efe9fb;
-  --mine: #e3f5e9;
-  --theirs: #fdf3e3;
+/* Us, Guided — "Lantern Journal" themes (Nov 21, 2026).
+   Two looks, switched by data-theme on <html>:
+   - Parchment (default, light): aged paper, sepia ink, antique gold.
+     No bright white surfaces, no glow.
+   - Candlelight (dark): deep warm browns, parchment-cream text.
+     The ONLY glow is a faint haze behind the header lantern mark.
+   The choice persists in localStorage ('ug-theme') and is applied before
+   first paint by the inline script in index.html. */
+:root, :root[data-theme="parchment"] {
+  color-scheme: light;
+  --accent: #a87f2e;
+  --accent-dark: #8a671f;
+  --on-accent: #2e2010;
+  --bg: #f2e7cf;
+  --card: #faf3e0;
+  --card-alt: #eee0bd;
+  --ink: #3e2f23;
+  --muted: #7d6c54;
+  --line: #d9c69c;
+  --guide: #f1e5c6;
+  --mine: #ecdcb4;
+  --theirs: #f8efdb;
+  --field: #faf3e0;
+  --shadow: rgba(62, 47, 35, .10);
+  --overlay: rgba(46, 32, 18, .45);
+  --note-bg: #e6e2c4;
+  --note-ink: #55652c;
+  --error-bg: #f7ddd0;
+  --error-ink: #a02c1e;
+  --paper-hi: rgba(255, 251, 235, .55);
+  --paper-lo: rgba(168, 127, 46, .07);
+  --paper-line: rgba(62, 47, 35, .025);
+}
+:root[data-theme="candlelight"] {
+  color-scheme: dark;
+  --accent: #d3a24a;
+  --accent-dark: #e7bc66;
+  --on-accent: #2e2010;
+  --bg: #231810;
+  --card: #32241a;
+  --card-alt: #3a2a1c;
+  --ink: #f0e3c6;
+  --muted: #b3a184;
+  --line: #54402a;
+  --guide: #38291a;
+  --mine: #47351d;
+  --theirs: #2c1f14;
+  --field: #2b1d12;
+  --shadow: rgba(0, 0, 0, .35);
+  --overlay: rgba(10, 6, 3, .6);
+  --note-bg: #3a3a22;
+  --note-ink: #d7e2ae;
+  --error-bg: #4a211b;
+  --error-ink: #f2b1a4;
+  --paper-hi: rgba(211, 162, 74, .05);
+  --paper-lo: rgba(0, 0, 0, .28);
+  --paper-line: rgba(240, 227, 198, .018);
 }
 * { box-sizing: border-box; }
 body {
-  margin: 0; padding: 16px; background: var(--bg); color: var(--ink);
+  margin: 0; padding: 16px; color: var(--ink);
+  /* Subtle CSS-only paper feel: two soft blotches + a faint fibre grain. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 90% 55% at 15% -5%, var(--paper-hi), transparent 60%),
+    radial-gradient(ellipse 80% 50% at 110% 105%, var(--paper-lo), transparent 55%),
+    repeating-linear-gradient(0deg, var(--paper-line) 0 1px, transparent 1px 4px);
+  background-attachment: fixed;
   font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   max-width: 760px; margin-inline: auto;
+}
+/* Headings and the wordmark wear a serif (journal) face; body and chat
+   text keep the clean sans stack — readability first. */
+h1, h2, h3, h4, legend, .logo, .auth-choice-title {
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
 }
 h1 { font-size: 1.5rem; margin: 0 0 4px; }
 h3 { margin: 0 0 8px; }
 button { cursor: pointer; font: inherit; }
 button.primary {
-  background: var(--purple); color: #fff; border: none; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent); border: none; border-radius: 10px;
   padding: 10px 16px; font-weight: 600;
 }
-button.primary:hover { background: var(--purple-dark); }
+button.primary:hover { background: var(--accent-dark); }
 button.ghost { background: none; border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; color: var(--ink); }
 .small-btn { padding: 2px 8px; font-size: .8rem; }
 input, textarea, select {
   font: inherit; padding: 9px 10px; border: 1px solid var(--line);
-  border-radius: 10px; background: #fff; width: 100%;
+  border-radius: 10px; background: var(--field); color: var(--ink); width: 100%;
 }
 label { display: block; margin: 8px 0; font-size: .92rem; }
 label.check, label.radio { display: flex; gap: 8px; align-items: flex-start; font-weight: normal; }
@@ -40,36 +98,45 @@ fieldset { border: 1px solid var(--line); border-radius: 12px; margin: 14px 0; p
 legend { font-weight: 600; padding: 0 6px; }
 .muted { color: var(--muted); }
 .small { font-size: .85rem; }
-.error { color: #b3261e; background: #fdecea; border-radius: 8px; padding: 8px 10px; }
+.error { color: var(--error-ink); background: var(--error-bg); border-radius: 8px; padding: 8px 10px; }
 .done { text-decoration: line-through; color: var(--muted); }
 .badge {
-  background: var(--purple); color: #fff; font-size: .7rem; font-weight: 700;
+  background: var(--accent); color: var(--on-accent); font-size: .7rem; font-weight: 700;
   border-radius: 999px; padding: 2px 8px; vertical-align: middle;
 }
 .card {
   background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 16px; margin: 12px 0; box-shadow: 0 1px 3px rgba(60, 40, 120, .05);
+  padding: 16px; margin: 12px 0; box-shadow: 0 1px 3px var(--shadow);
 }
 .auth-card { margin-top: 6vh; }
+/* Brand mark: the lantern, in antique gold via currentColor. In
+   Candlelight it gets the theme's single allowed glow — one faint,
+   low-opacity haze behind the mark, nothing else glows. */
+.brand-mark { color: var(--accent); position: relative; z-index: 0; display: inline-block; }
+.brand-svg { height: 1.15em; width: auto; vertical-align: -0.22em; position: relative; z-index: 1; }
+:root[data-theme="candlelight"] .brand-mark::before {
+  content: ""; position: absolute; inset: -16px -12px; z-index: -1;
+  background: radial-gradient(circle, rgba(211, 162, 74, .20), transparent 70%);
+}
 /* Logged-out home screen: three unmistakable doors, each with a one-line
    description of who it's for (Nov 21). */
 .auth-choices { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
 .auth-choice {
   display: block; width: 100%; text-align: left; cursor: pointer;
-  background: #fff; border: 1.5px solid var(--line); border-radius: 14px;
+  background: var(--card); border: 1.5px solid var(--line); border-radius: 14px;
   padding: 12px 14px; font: inherit; color: var(--ink);
 }
-.auth-choice:hover { border-color: var(--purple); }
-.auth-choice.active { border-color: var(--purple); background: var(--bg); box-shadow: inset 0 0 0 1px var(--purple); }
+.auth-choice:hover { border-color: var(--accent); }
+.auth-choice.active { border-color: var(--accent); background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
 .auth-choice-title { display: block; font-weight: 700; font-size: 1.05rem; margin-bottom: 2px; }
 .auth-choice-desc { display: block; color: var(--muted); font-size: .88rem; line-height: 1.4; }
 #space-join-preview { margin-top: 10px; }
 #space-join-preview .note { display: block; margin-bottom: 4px; }
 .auth-tabs, .tabs { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 .auth-tab, .tab {
-  border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 8px 16px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 8px 16px;
 }
-.auth-tab.active, .tab.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+.auth-tab.active, .tab.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .topbar .logo { font-weight: 700; flex: 1; }
 .messages { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
@@ -77,12 +144,12 @@ legend { font-weight: 600; padding: 0 6px; }
 .msg .msg-author { font-size: .78rem; font-weight: 700; color: var(--muted); margin-bottom: 3px; }
 .msg.mine { background: var(--mine); align-self: flex-end; }
 .msg.theirs { background: var(--theirs); align-self: flex-start; }
-.msg.guide { background: var(--guide); align-self: stretch; max-width: 100%; border: 1px dashed var(--purple); }
+.msg.guide { background: var(--guide); align-self: stretch; max-width: 100%; border: 1px dashed var(--accent); }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
 .composer textarea { flex: 1; resize: vertical; }
 .composer-btns { display: flex; flex-direction: column; gap: 6px; }
 #scheduled-strip {
-  border: 1px dashed var(--purple); background: #fffdf4; border-radius: 14px;
+  border: 1px dashed var(--accent); background: var(--card-alt); border-radius: 14px;
   padding: 10px 14px; margin: 10px 0;
 }
 #scheduled-strip h4 { margin: 0 0 6px; font-size: .92rem; }
@@ -90,7 +157,7 @@ legend { font-weight: 600; padding: 0 6px; }
 .sched-row:last-child { border-bottom: none; }
 .sched-row .sched-body { flex: 1; white-space: pre-wrap; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
-.focus-card { border-left: 5px solid var(--purple); }
+.focus-card { border-left: 5px solid var(--accent); }
 .inline-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .inline-form input { flex: 1; min-width: 140px; }
 .inline-form select { width: auto; }
@@ -100,22 +167,23 @@ legend { font-weight: 600; padding: 0 6px; }
 .plain-list li:last-child { border-bottom: none; }
 .reminder { padding: 4px 0; }
 .modal {
-  position: fixed; inset: 0; background: rgba(30, 20, 60, .45);
+  position: fixed; inset: 0; background: var(--overlay);
   display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 20px 10px;
 }
 .modal[hidden] { display: none; }
-.modal-box { background: #fff; border-radius: 16px; padding: 20px; width: 100%; max-width: 620px; }
+.modal-box { background: var(--card); border-radius: 16px; padding: 20px; width: 100%; max-width: 620px; }
 .modal-actions { display: flex; justify-content: space-between; margin-top: 14px; }
 .quiz-q { margin: 10px 0; }
 .quiz-q p { margin: 4px 0; }
-a { color: var(--purple-dark); }
-.note { color: #2e7d32; background: #e8f5e9; border-radius: 8px; padding: 8px 10px; }
+a { color: var(--accent-dark); }
+.note { color: var(--note-ink); background: var(--note-bg); border-radius: 8px; padding: 8px 10px; }
 button.danger {
   background: #b3261e; color: #fff; border: none; border-radius: 10px;
   padding: 10px 16px; font-weight: 600;
 }
 button.danger:hover { background: #8f1d17; }
 .danger-title { color: #b3261e; margin: 10px 0 4px; }
+:root[data-theme="candlelight"] .danger-title { color: var(--error-ink); }
 hr.sep { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
 .auth-legal { margin-top: 14px; }
 .center-links { text-align: center; margin: 10px 0 20px; }
