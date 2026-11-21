@@ -134,7 +134,6 @@ function showAuth(which) {
   document.querySelectorAll('[data-auth-tab]').forEach((b) => b.classList.toggle('active', b.dataset.authTab === which));
   $('#login-form').hidden = which !== 'login';
   $('#signup-form').hidden = which !== 'signup';
-  $('#join-form').hidden = which !== 'join';
   $('#forgot-form').hidden = which !== 'forgot';
   $('#reset-form').hidden = which !== 'reset';
   $('#forgot-row').hidden = which !== 'login';
@@ -186,49 +185,60 @@ async function handleAuth(formId, url) {
   });
 }
 handleAuth('#login-form', '/api/auth/login');
-handleAuth('#signup-form', '/api/auth/signup');
 
-/* Join with an invite: the code is checked against the public preview
+/* Sign up — one form, two outcomes. The invite-code box at the top is
+   optional: leave it blank and it's a plain signup (account + your own
+   first space). Put a code in and the SAME form joins that Space as it
+   creates the account: the code is checked against the public preview
    endpoint as it's typed, so the form can say "You're joining 'X'"
-   before anything is created. On submit the code is checked once more,
-   and after the account is created the invited space is made the active
-   one, so the new user lands inside it — never in a space of their own. */
+   before anything is created, and on submit it's checked once more — a
+   code that's present but wrong is a hard stop, never a silent solo
+   signup. After a join, the invited space is made the active one, so
+   the new user lands inside it — never in a space of their own. */
 let pendingWelcome = null;
 async function lookupInvite(code) {
   const res = await fetch(`/api/invite/${encodeURIComponent(code)}`);
   if (!res.ok) return null;
   return res.json().catch(() => null);
 }
-function showJoinInfo(ok, text) {
-  const el = $('#join-space-info');
+function showSignupInfo(ok, text) {
+  const el = $('#signup-space-info');
   el.textContent = text;
   el.className = ok ? 'small note' : 'small error';
   el.hidden = false;
 }
-$('#join-code').addEventListener('input', () => { $('#join-space-info').hidden = true; });
-$('#join-code').addEventListener('blur', async () => {
-  const code = $('#join-code').value.trim().toUpperCase();
-  if (!code) { $('#join-space-info').hidden = true; return; }
+$('#signup-code').addEventListener('input', () => { $('#signup-space-info').hidden = true; });
+$('#signup-code').addEventListener('blur', async () => {
+  const code = $('#signup-code').value.trim().toUpperCase();
+  if (!code) { $('#signup-space-info').hidden = true; return; }
   const found = await lookupInvite(code);
   if (!found) {
-    showJoinInfo(false, 'That code doesn\'t match any Space — check it and try again.');
+    showSignupInfo(false, 'That code doesn\'t match any Space — check it and try again, or clear the box to start your own Space.');
     return;
   }
   const who = found.owner_first_name ? ` (${found.owner_first_name}'s Space)` : '';
-  showJoinInfo(true, `You're joining '${found.space.name}'${who}.`);
+  showSignupInfo(true, `You're joining '${found.space.name}'${who}.`);
 });
-$('#join-form').addEventListener('submit', async (e) => {
+$('#signup-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const body = Object.fromEntries(new FormData(form));
   const code = String(body.code || '').trim().toUpperCase();
-  const found = code ? await lookupInvite(code) : null;
+  if (!code) {
+    // Plain signup — no code, no join; the account gets its own space.
+    try {
+      await api('POST', '/api/auth/signup', body);
+      await boot();
+    } catch (err) { authError(err.message); }
+    return;
+  }
+  const found = await lookupInvite(code);
   if (!found) {
-    showJoinInfo(false, 'That code doesn\'t match any Space — check it and try again. No account was created.');
+    showSignupInfo(false, 'That code doesn\'t match any Space — check it and try again, or clear the box to start your own Space. No account was created.');
     return;
   }
   try {
-    const data = await api('POST', '/api/auth/join', body);
+    const data = await api('POST', '/api/auth/join', { ...body, code });
     if (data.space?.id) {
       state.activeSpaceId = data.space.id;
       localStorage.setItem('ug-active-space', data.space.id);
@@ -490,7 +500,7 @@ function inviteText() {
   const space = activeSpace();
   const code = space?.invite_code || '';
   const where = space?.name ? `my "${space.name}" space` : 'my space';
-  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Go to ${location.host}\n2. Tap "Join with an invite"\n3. Enter this code: ${code}\n\nThat code joins ${where} — you'll land right in it with me.`;
+  return `Join me on Us, Guided 💜 — a shared space with an AI guide that helps us talk things through.\n\n1. Go to ${location.host}\n2. Tap "Sign up"\n3. Put this code in the invite-code box at the top of the form: ${code}\n\nThat code joins ${where} — you'll land right in it with me.`;
 }
 function wireInvite() {
   if (!activeSpace()?.invite_code) return;

@@ -179,7 +179,7 @@ setInterval(() => { deliverDue(); }, 30000);
 
 /* ---------------- auth ---------------- */
 app.post('/api/auth/signup', (req, res) => {
-  const { email, password, name } = req.body || {};
+  const { email, password, name, birthday } = req.body || {};
   if (!email || !password || !name) return res.status(400).json({ error: 'Name, email and password are required.' });
   if (!agreedToTerms(req.body)) {
     return res.status(400).json({ error: 'Please read and agree to the Terms of Use and Privacy Policy to create an account.' });
@@ -193,7 +193,10 @@ app.post('/api/auth/signup', (req, res) => {
   });
   const space = store.createSpace({ name: `${String(name)}'s space`, kind: 'couple', invite_code: inviteCode(), owner_id: user.id });
   store.addMembership(user.id, space.id, 'owner');
-  const person = store.createPerson({ space_id: space.id, user_id: user.id, name: String(name), email: user.email });
+  const person = store.createPerson({
+    space_id: space.id, user_id: user.id, name: String(name), email: user.email,
+    birthday: birthday || null,
+  });
   setSession(res, user.id);
   res.json({ user: { id: user.id, email: user.email }, space, person: publicPerson(person) });
 });
