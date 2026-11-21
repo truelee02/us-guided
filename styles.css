@@ -145,3 +145,24 @@ a.ghost.chip-link {
 .space-row:last-child { border-bottom: none; }
 .space-row.active { background: var(--bg); border-radius: 10px; padding-inline: 8px; }
 .space-row-main { flex: 1; min-width: 0; overflow-wrap: break-word; }
+/* Signup agreement box + composer disclosure (Nov 19). */
+.agree-box {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 12px;
+  padding: 10px 14px; margin: 12px 0;
+}
+.agree-box h4 { margin: 2px 0 6px; }
+.agree-box ul { margin: 4px 0; padding-left: 18px; }
+.agree-box li { margin: 4px 0; line-height: 1.45; }
+.composer-note { margin: 6px 2px 0; }
+button:disabled { opacity: .55; cursor: default; }
+/* Space rename/delete: the row lives in a .space-item wrapper with the
+   inline edit panels underneath it. */
+.space-item { border-bottom: 1px solid var(--line); }
+.space-item:last-child { border-bottom: none; }
+.space-item .space-row { border-bottom: none; }
+.space-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.space-edit {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 2px 0 10px;
+}
+.space-edit input { flex: 1; min-width: 140px; width: auto; }
+.space-edit p { flex: 1 1 100%; margin: 4px 0; }

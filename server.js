@@ -24,6 +24,14 @@ const backups = require('./backups');
 const mailer = require('./mailer');
 const { astroSummary } = require('./astro');
 
+const TERMS_VERSION = '2026-11-19';
+/* The signup form's agreement checkbox arrives as 'on' (form data) or a
+   boolean true (JSON). Anything else counts as not agreed. */
+function agreedToTerms(body) {
+  const v = body && body.agree;
+  return v === true || v === 1 || v === 'on' || v === 'true' || v === '1';
+}
+
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-only-secret-change-me';
 const COOKIE_SECURE = process.env.NODE_ENV === 'production' ? '; Secure' : '';
@@ -173,10 +181,16 @@ setInterval(() => { deliverDue(); }, 30000);
 app.post('/api/auth/signup', (req, res) => {
   const { email, password, name } = req.body || {};
   if (!email || !password || !name) return res.status(400).json({ error: 'Name, email and password are required.' });
+  if (!agreedToTerms(req.body)) {
+    return res.status(400).json({ error: 'Please read and agree to the Terms of Use and Privacy Policy to create an account.' });
+  }
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (store.getUserByEmail(String(email).toLowerCase())) return res.status(409).json({ error: 'That email already has an account.' });
   const { salt, hash } = hashPassword(String(password));
-  const user = store.createUser({ email: String(email).toLowerCase(), password_hash: hash, salt });
+  const user = store.createUser({
+    email: String(email).toLowerCase(), password_hash: hash, salt,
+    terms_agreed_at: new Date().toISOString(), terms_version: TERMS_VERSION,
+  });
   const space = store.createSpace({ name: `${String(name)}'s space`, kind: 'couple', invite_code: inviteCode(), owner_id: user.id });
   store.addMembership(user.id, space.id, 'owner');
   const person = store.createPerson({ space_id: space.id, user_id: user.id, name: String(name), email: user.email });
@@ -318,6 +332,41 @@ app.post('/api/spaces/join', requireAuth, (req, res) => {
   res.json({ space: mine || space, alreadyMember, person: publicPerson(person) });
 });
 
+/* Rename a space — owner only. Non-members get a 404 so the space's
+   existence isn't leaked; members who aren't the owner get a 403. */
+app.patch('/api/spaces/:id', requireAuth, (req, res) => {
+  const space = store.getSpace(req.params.id);
+  if (!space || !store.getMembership(req.user.id, space.id)) {
+    return res.status(404).json({ error: 'Space not found.' });
+  }
+  if (space.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the space owner can rename it.' });
+  }
+  const name = String((req.body || {}).name || '').trim();
+  if (!name || name.length > 60) {
+    return res.status(400).json({ error: 'Give the space a name (1 to 60 characters).' });
+  }
+  store.updateSpaceName(space.id, name);
+  const mine = store.listSpacesForUser(req.user.id).find((s) => s.id === space.id);
+  res.json({ space: mine || store.getSpace(space.id) });
+});
+
+/* Delete a space — owner only. Removes the space and everything in it
+   (memberships, people, messages, focuses, reminders, date ideas, weekly
+   sets, daily activities) for everyone. The owner's account is untouched,
+   and deleting your only space is allowed. */
+app.delete('/api/spaces/:id', requireAuth, (req, res) => {
+  const space = store.getSpace(req.params.id);
+  if (!space || !store.getMembership(req.user.id, space.id)) {
+    return res.status(404).json({ error: 'Space not found.' });
+  }
+  if (space.owner_id !== req.user.id) {
+    return res.status(403).json({ error: 'Only the space owner can delete it.' });
+  }
+  store.deleteSpace(space.id);
+  res.json({ ok: true });
+});
+
 /* ---------------- people / profiles ---------------- */
 app.get('/api/people', requireAuth, requireSpace, (req, res) => {
   res.json({ people: store.listPeople(req.spaceId).map(publicPerson) });
@@ -379,9 +428,10 @@ app.post('/api/messages', requireAuth, requireSpace, async (req, res) => {
   const other = others[0] || null;
 
   // 1) Clean the raw draft. The raw text is NEVER stored — only the result.
+  // The cleaned message posts with no marker: the rewording is disclosed in
+  // the Talk tab, the signup agreement and the Terms instead.
   const cleaned = await ai.cleanMessage(String(text), author, people, req.space);
-  const suffix = '(reworded by AI for clearer communication)';
-  const body = cleaned.changed ? `${cleaned.text} ${suffix}` : cleaned.text;
+  const body = cleaned.text;
 
   // 1b) Scheduled send: keep the cleaned message private to the author and
   // post it when its time comes (see deliverDue above).
@@ -466,6 +516,7 @@ app.delete('/api/date-ideas/:id', requireAuth, (req, res) => {
 app.get('/api/focuses', requireAuth, requireSpace, async (req, res) => {
   const people = store.listPeople(req.spaceId);
   const dateKey = todayKey();
+  const me = myPerson(req);
   const focuses = [];
   for (const person of people) {
     let focus = store.getDailyFocus(req.spaceId, person.id, dateKey);
@@ -474,12 +525,27 @@ app.get('/api/focuses', requireAuth, requireSpace, async (req, res) => {
       const { text } = await ai.dailyFocus(person, partner, people, req.space);
       focus = store.saveDailyFocus(req.spaceId, person.id, dateKey, text);
     }
-    focuses.push({ ...focus, person_name: person.name });
+    /* Focuses are private: a focus is still generated for every person
+       in the space, but the API only ever returns the requester's own. */
+    if (me && person.id === me.id) {
+      focuses.push({ ...focus, person_name: person.name });
+    }
   }
   res.json({ focuses });
 });
+/* Toggle a focus's done state — only its owner can. A focus in a space
+   the requester has no profile in gets a 404 so its existence isn't
+   leaked; a fellow member of the space gets a 403 (same conventions
+   as rename/delete space). */
 app.patch('/api/focuses/:id', requireAuth, (req, res) => {
-  store.setDailyFocusDone(req.params.id, !!(req.body && req.body.done));
+  const focus = store.getDailyFocusById(req.params.id);
+  if (!focus) return res.status(404).json({ error: 'Focus not found.' });
+  const me = store.getPersonInSpace(focus.space_id, req.user.id);
+  if (!me) return res.status(404).json({ error: 'Focus not found.' });
+  if (focus.person_id !== me.id) {
+    return res.status(403).json({ error: 'You can only update your own focus.' });
+  }
+  store.setDailyFocusDone(focus.id, !!(req.body && req.body.done));
   res.json({ ok: true });
 });
 

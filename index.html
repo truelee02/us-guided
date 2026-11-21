@@ -34,6 +34,16 @@
     <label>Your name <input type="text" name="name" required autocomplete="name"></label>
     <label>Email <input type="email" name="email" required autocomplete="email"></label>
     <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <div class="agree-box">
+      <h4>Before you join</h4>
+      <ul class="small">
+        <li>Us, Guided is <strong>not therapy</strong> and does not replace professional help.</li>
+        <li>When you send a message, the Guide (an AI) may <strong>reword it for clearer communication</strong> before it posts.</li>
+        <li>The AI can make mistakes. You are responsible for your own decisions.</li>
+        <li>If you are in an abusive or unsafe relationship, this app is not the help you need. Call the <strong>National Domestic Violence Hotline at 1-800-799-7233</strong> or text <strong>START</strong> to <strong>88788</strong>. In a crisis, call or text <strong>988</strong>. In an emergency, call <strong>911</strong>.</li>
+      </ul>
+    </div>
+    <label class="check"><input type="checkbox" name="agree" required> <span>I have read and agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a></span></label>
     <button type="submit" class="primary">Create our space</button>
     <p class="muted small">Creates your first space and gives you an invite code to share with your partner. You can add more spaces later — one for your family, one for anyone you want a guided chat with.</p>
   </form>
@@ -97,10 +107,11 @@
     <form id="composer" class="composer">
       <textarea id="composer-text" rows="3" placeholder="Say it like you'd say it out loud — the Guide will help it land kindly."></textarea>
       <div class="composer-btns">
-        <button type="submit" class="primary">Send</button>
+        <button type="submit" class="primary" id="send-btn">Send</button>
         <button type="button" id="schedule-toggle" class="ghost">🕐 Later</button>
       </div>
     </form>
+    <p class="composer-note muted small">Heads up: when you send a message, the Guide (an AI) may reword it for clearer communication before it posts.</p>
     <div id="schedule-panel" class="card" hidden>
       <p class="small muted">Write your message above, then pick when it should post. Your partner won't see it until it lands in the chat — and it still goes through the Guide first, like every message.</p>
       <div class="chips">

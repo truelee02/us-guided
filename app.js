@@ -26,6 +26,18 @@ let state = {
 };
 const activeSpace = () => state.spaces.find((s) => s.id === state.activeSpaceId) || state.spaces[0] || null;
 
+/* The no-space state (reachable by deleting your only space): clear the
+   per-space panels and point at the Us tab, where spaces are made/joined. */
+function showNoSpace() {
+  $('#messages').innerHTML = '<p class="muted">You don\'t have a space open right now. Create one, or join one with an invite code, in the Us tab.</p>';
+  $('#focus-cards').innerHTML = '';
+  $('#scheduled-strip').hidden = true;
+  $('#scheduled-list').innerHTML = '';
+  $('#people-list').innerHTML = '';
+  $('#invite-code').textContent = '—';
+  $('#active-space-name').textContent = 'this space';
+}
+
 /* ================= Quizzes ================= */
 const LOVE_QUIZ = [
   { q: 'I feel most loved when my partner…', options: [
@@ -194,6 +206,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
 
 /* ================= Talk ================= */
 async function loadFocuses() {
+  if (!state.activeSpaceId) { $('#focus-cards').innerHTML = ''; return; }
   const { focuses } = await api('GET', '/api/focuses');
   $('#focus-cards').innerHTML = focuses.map((f) => `
     <div class="card focus-card">
@@ -208,6 +221,7 @@ async function loadFocuses() {
 }
 
 async function loadMessages() {
+  if (!state.activeSpaceId) return;
   const { messages } = await api('GET', '/api/messages');
   state.messages = messages;
   const mine = state.myPersonId;
@@ -223,18 +237,31 @@ async function loadMessages() {
 $('#composer').addEventListener('submit', async (e) => {
   e.preventDefault();
   const ta = $('#composer-text');
-  const text = ta.value.trim();
+  const typed = ta.value;
+  const text = typed.trim();
   if (!text) return;
   const err = $('#talk-error');
   err.hidden = true;
+  const sendBtn = $('#send-btn');
   ta.disabled = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Sending...';
   try {
     await api('POST', '/api/messages', { text });
     ta.value = '';
     await loadMessages();
   } catch (e2) {
-    err.textContent = e2.message; err.hidden = false;
-  } finally { ta.disabled = false; ta.focus(); }
+    // A failed send must never fail silently: say so, and put the words
+    // back in the box so nothing the user wrote is lost.
+    err.textContent = 'That message did not send. Check your connection and try again.';
+    err.hidden = false;
+    ta.value = typed;
+  } finally {
+    ta.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    ta.focus();
+  }
 });
 
 /* ================= Scheduled messages ================= */
@@ -296,6 +323,7 @@ $('#schedule-confirm').addEventListener('click', async () => {
 });
 
 async function loadScheduled() {
+  if (!state.activeSpaceId) { $('#scheduled-strip').hidden = true; return; }
   const { scheduled } = await api('GET', '/api/messages/scheduled');
   $('#scheduled-strip').hidden = !scheduled.length;
   $('#scheduled-list').innerHTML = scheduled.map((m) => `
@@ -314,6 +342,7 @@ async function loadScheduled() {
 
 /* ================= Together ================= */
 async function loadTogether() {
+  if (!state.activeSpaceId) return;
   const [rem, ideas, weekly] = await Promise.all([
     api('GET', '/api/reminders'), api('GET', '/api/date-ideas'), api('GET', '/api/weekly'),
   ]);
@@ -365,6 +394,14 @@ $('#idea-form').addEventListener('submit', async (e) => {
 
 /* ================= Us / profiles ================= */
 async function loadPeople() {
+  if (!state.activeSpaceId) {
+    state.people = [];
+    state.myPersonId = null;
+    $('#people-list').innerHTML = '';
+    $('#invite-code').textContent = '—';
+    $('#active-space-name').textContent = 'this space';
+    return;
+  }
   const { people } = await api('GET', '/api/people');
   state.people = people;
   const mine = people.find((p) => p.user_id === state.me?.user?.id) || null;
@@ -420,20 +457,115 @@ function renderSwitcher() {
 function renderSpaces() {
   renderSwitcher();
   $('#spaces-list').innerHTML = state.spaces.map((s) => `
-    <div class="space-row ${s.id === state.activeSpaceId ? 'active' : ''}">
-      <span class="space-row-main">
-        <strong>${esc(s.name)}</strong>
-        <span class="badge">${s.kind === 'family' ? 'Family' : 'Couple'}</span>
-        ${s.role === 'owner' ? '<span class="badge">owner</span>' : ''}
-        <br><span class="muted small">${s.member_count} member${s.member_count === 1 ? '' : 's'} · invite code <strong>${esc(s.invite_code)}</strong></span>
-      </span>
-      ${s.id === state.activeSpaceId
-        ? '<span class="muted small">viewing</span>'
-        : `<button type="button" class="ghost small-btn" data-switch-space="${s.id}">Switch</button>`}
+    <div class="space-item">
+      <div class="space-row ${s.id === state.activeSpaceId ? 'active' : ''}">
+        <span class="space-row-main">
+          <strong>${esc(s.name)}</strong>
+          <span class="badge">${s.kind === 'family' ? 'Family' : 'Couple'}</span>
+          ${s.role === 'owner' ? '<span class="badge">owner</span>' : ''}
+          <br><span class="muted small">${s.member_count} member${s.member_count === 1 ? '' : 's'} · invite code <strong>${esc(s.invite_code)}</strong></span>
+        </span>
+        ${s.id === state.activeSpaceId
+          ? '<span class="muted small">viewing</span>'
+          : `<button type="button" class="ghost small-btn" data-switch-space="${s.id}">Switch</button>`}
+        ${s.role === 'owner' ? `<span class="space-row-actions">
+          <button type="button" class="ghost small-btn" data-rename-space="${s.id}">Rename</button>
+          <button type="button" class="ghost small-btn" data-delete-space="${s.id}">Delete</button>
+        </span>` : ''}
+      </div>
+      ${s.role === 'owner' ? `
+      <div class="space-edit" data-rename-panel="${s.id}" hidden>
+        <input type="text" maxlength="60" value="${esc(s.name)}" data-rename-input="${s.id}" aria-label="New name for this space">
+        <button type="button" class="primary small-btn" data-rename-save="${s.id}">Save name</button>
+        <button type="button" class="ghost small-btn" data-rename-cancel="${s.id}">Cancel</button>
+      </div>
+      <div class="space-edit" data-delete-panel="${s.id}" hidden>
+        <p class="small">Delete <strong>${esc(s.name)}</strong>? Deleting permanently removes the space and its conversations for everyone in it, and cannot be undone.</p>
+        <button type="button" class="danger" data-delete-confirm="${s.id}">Yes, delete this space</button>
+        <button type="button" class="ghost small-btn" data-delete-cancel="${s.id}">Keep it</button>
+      </div>` : ''}
     </div>`).join('');
   document.querySelectorAll('[data-switch-space]').forEach((b) => {
     b.addEventListener('click', () => switchSpace(b.dataset.switchSpace));
   });
+  document.querySelectorAll('[data-rename-space]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const panel = document.querySelector(`[data-rename-panel="${b.dataset.renameSpace}"]`);
+      panel.hidden = false;
+      panel.querySelector('input').focus();
+    });
+  });
+  document.querySelectorAll('[data-rename-cancel]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelector(`[data-rename-panel="${b.dataset.renameCancel}"]`).hidden = true;
+    });
+  });
+  document.querySelectorAll('[data-rename-save]').forEach((b) => {
+    b.addEventListener('click', () => renameSpace(b.dataset.renameSave));
+  });
+  document.querySelectorAll('[data-delete-space]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelector(`[data-delete-panel="${b.dataset.deleteSpace}"]`).hidden = false;
+    });
+  });
+  document.querySelectorAll('[data-delete-cancel]').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelector(`[data-delete-panel="${b.dataset.deleteCancel}"]`).hidden = true;
+    });
+  });
+  document.querySelectorAll('[data-delete-confirm]').forEach((b) => {
+    b.addEventListener('click', () => deleteSpace(b.dataset.deleteConfirm));
+  });
+}
+
+async function renameSpace(spaceId) {
+  const input = document.querySelector(`[data-rename-input="${spaceId}"]`);
+  const name = (input?.value || '').trim();
+  const msg = $('#space-msg');
+  if (!name) {
+    msg.textContent = 'Give the space a name first.';
+    msg.className = 'small error';
+    msg.hidden = false;
+    return;
+  }
+  try {
+    await api('PATCH', `/api/spaces/${spaceId}`, { name });
+    await refreshSpaces();
+    await loadPeople(); // keeps the invite card's space name current
+    msg.textContent = `Renamed to "${name}".`;
+    msg.className = 'small note';
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+  }
+  msg.hidden = false;
+}
+
+async function deleteSpace(spaceId) {
+  const msg = $('#space-msg');
+  const wasActive = state.activeSpaceId === spaceId;
+  try {
+    await api('DELETE', `/api/spaces/${spaceId}`);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'small error';
+    msg.hidden = false;
+    return;
+  }
+  await refreshSpaces(); // re-points activeSpaceId at a remaining space, or null
+  if (!state.spaces.length) {
+    state.activeSpaceId = null;
+    localStorage.removeItem('ug-active-space');
+    renderSpaces();
+    showNoSpace();
+    msg.textContent = 'Space deleted. That was your only space — create a new one above, or join one with an invite code.';
+  } else {
+    if (wasActive) await switchSpace(state.activeSpaceId);
+    else renderSpaces();
+    msg.textContent = 'Space deleted.';
+  }
+  msg.className = 'small note';
+  msg.hidden = false;
 }
 
 async function refreshSpaces() {
@@ -631,10 +763,14 @@ async function boot() {
     const health = await api('GET', '/api/health').catch(() => null);
     if (health && health.ai === 'stub') $('#stub-badge').hidden = false;
     renderSpaces();
-    await loadPeople();
-    await loadFocuses();
-    await loadMessages();
-    await loadScheduled();
+    if (state.activeSpaceId) {
+      await loadPeople();
+      await loadFocuses();
+      await loadMessages();
+      await loadScheduled();
+    } else {
+      showNoSpace();
+    }
   } catch (_) {
     $('#auth-view').hidden = false;
     $('#app-view').hidden = true;
@@ -644,5 +780,5 @@ boot();
 
 // Keep the chat fresh so scheduled messages appear shortly after they post.
 setInterval(() => {
-  if (!$('#app-view').hidden) { loadMessages(); loadScheduled(); }
+  if (!$('#app-view').hidden && state.activeSpaceId) { loadMessages(); loadScheduled(); }
 }, 30000);

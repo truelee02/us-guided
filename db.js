@@ -101,6 +101,9 @@ function trySqlite() {
   `);
   // Migration for databases created before scheduled messages existed.
   try { db.exec('ALTER TABLE messages ADD COLUMN scheduled_for TEXT'); } catch (_) {}
+  // Migration for databases created before signup recorded terms agreement.
+  try { db.exec('ALTER TABLE users ADD COLUMN terms_agreed_at TEXT'); } catch (_) {}
+  try { db.exec('ALTER TABLE users ADD COLUMN terms_version TEXT'); } catch (_) {}
 
   const row = (sql, ...p) => db.prepare(sql).get(...p) || null;
   const rows = (sql, ...p) => db.prepare(sql).all(...p);
@@ -166,6 +169,10 @@ function trySqlite() {
     getSpace: (sid) => row('SELECT * FROM spaces WHERE id = ?', sid),
     getSpaceByInvite: (code) => row('SELECT * FROM spaces WHERE invite_code = ?', code),
     setSpaceOwner(sid, uid) { run('UPDATE spaces SET owner_id = ? WHERE id = ?', uid, sid); },
+    updateSpaceName(sid, name) {
+      run('UPDATE spaces SET name = ? WHERE id = ?', name, sid);
+      return row('SELECT * FROM spaces WHERE id = ?', sid);
+    },
     addMembership(uid, sid, role) {
       run('INSERT OR IGNORE INTO memberships (id, user_id, space_id, role, created_at) VALUES (?,?,?,?,?)',
         id(), uid, sid, role || 'member', now());
@@ -183,8 +190,9 @@ function trySqlite() {
 
     createUser(u) {
       const user = { id: id(), created_at: now(), ...u };
-      run('INSERT INTO users (id, email, password_hash, salt, created_at) VALUES (?,?,?,?,?)',
-        user.id, user.email, user.password_hash, user.salt, user.created_at);
+      run('INSERT INTO users (id, email, password_hash, salt, terms_agreed_at, terms_version, created_at) VALUES (?,?,?,?,?,?,?)',
+        user.id, user.email, user.password_hash, user.salt,
+        user.terms_agreed_at || null, user.terms_version || null, user.created_at);
       return user;
     },
     getUserByEmail: (email) => row('SELECT * FROM users WHERE email = ?', email),
@@ -315,6 +323,9 @@ function trySqlite() {
     getDailyFocus(sid, personId, dateKey) {
       return row('SELECT * FROM daily_focuses WHERE space_id = ? AND person_id = ? AND date_key = ?', sid, personId, dateKey);
     },
+    getDailyFocusById(fid) {
+      return row('SELECT * FROM daily_focuses WHERE id = ?', fid);
+    },
     saveDailyFocus(sid, personId, dateKey, text) {
       run('INSERT OR IGNORE INTO daily_focuses (id, space_id, person_id, date_key, text, done) VALUES (?,?,?,?,?,0)',
         id(), sid, personId, dateKey, text);
@@ -414,6 +425,11 @@ function jsonStore() {
     setSpaceOwner(sid, uid) {
       const s = find('spaces', (x) => x.id === sid);
       if (s) { s.owner_id = uid; save(); }
+    },
+    updateSpaceName(sid, name) {
+      const s = find('spaces', (x) => x.id === sid);
+      if (s) { s.name = name; save(); }
+      return s;
     },
     addMembership(uid, sid, role) {
       let m = find('memberships', (x) => x.user_id === uid && x.space_id === sid);
@@ -563,6 +579,7 @@ function jsonStore() {
     },
     getDailyFocus: (sid, personId, dateKey) =>
       find('daily_focuses', (f) => f.space_id === sid && f.person_id === personId && f.date_key === dateKey),
+    getDailyFocusById: (fid) => find('daily_focuses', (f) => f.id === fid),
     saveDailyFocus(sid, personId, dateKey, text) {
       let f = this.getDailyFocus(sid, personId, dateKey);
       if (!f) {
